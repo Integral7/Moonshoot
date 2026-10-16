@@ -37,8 +37,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | # | Milestone | Status |
 |---|---|---|
 | 1 | Scaffold, tooling, quality framework, headless harness | ✅ done |
-| 2 | Physics core + unit tests | ⏳ next |
-| 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ☐ |
+| 2 | Physics core + unit tests | ✅ done |
+| 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ⏳ next |
 | 4 | Vehicle design (VAB) | ☐ — **pause after this** |
 | 5 | Launch | ☐ |
 | 6 | Earth orbit + TLI maneuver node | ☐ |
@@ -55,6 +55,23 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - Unit tests: settings + quality presets. E2E: boot/menu render, quality switching + persistence.
 - Notes: renderer is recreated when antialias changes (low ↔ medium/high). Logarithmic depth buffer is on.
 
+### M2 — Physics core (done)
+`src/physics/` (pure, SI units, ECI frame with +Z = Earth spin axis):
+- `constants.ts` real constants (WGS-84, DE430 lunar GM, US76). `bodies.ts` Earth/Moon, simplified ephemeris
+  (Moon circular in XY plane, tidally locked; `Ephemeris` sets initial Moon/Earth angles), lat/lon helpers.
+- `kepler.ts` elements↔state (equatorial/circular safe), universal-variable `propagateKepler`, anomaly/timing.
+- `integrator.ts` RK4 (preallocated), symplectic Euler, `FixedStepper` accumulator.
+- `atmosphere.ts` US76 exact to 86 km + table to 1000 km. `aero.ts` q, Sutton-Graves, Allen-Eggers, Mach drag rise.
+- `dynamics.ts` 7-state EOM (r, v, m) with thrust (pressure-dependent Isp), drag vs co-rotating air, banked lift, heat flux, g-load.
+- `rocket.ts` Tsiolkovsky etc. `maneuver.ts` local frame (prograde/normal/radial), Hohmann, TLI, phase angle, capture dv.
+- `lambert.ts` universal-variable Lambert (bisection). `patched.ts` patched-conic `predictTrajectory` (segments + events:
+  soi-enter/exit, periapsis, atmosphere, impact, escape) and `coast()` for exact time-warp coasting.
+- Tests (`tests/physics/`): published values (TLI 3.1 km/s, LEO/ISS, escape, GEO, Moon SOI, LOI 0.8–0.9 km/s, LLO period,
+  11 km/s entry), Curtis textbook examples 3.7/4.3/5.2, RK4-vs-Kepler, invariants, US76 table, entry g-loads, rocket eqn,
+  module purity guard.
+- Note: Allen-Eggers is only valid for steep entries; shallow supercircular ballistic entry simulates at ~14 g.
+
 ## Next steps
-Start M2: `src/physics/` — constants, vec3 math, two-body accel, RK4 fixed step, Kepler elements ↔ state,
-universal-variable propagation, SOI patching, atmosphere/drag, rocket equation, heating, maneuvers (Hohmann/TLI).
+Start M3: phase state machine + mission/campaign model, mission control HUD (mission clock MET, flight-director callout log),
+results-screen framework, free-play menu, procedural Earth (noise continents, clouds, atmosphere rim) and Moon (craters),
+scale handling (floating origin / scene in km), camera controls.

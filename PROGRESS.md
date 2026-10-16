@@ -42,8 +42,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 4 | Vehicle design (VAB) | ✅ done (user approved M5–M8) |
 | 5 | Launch | ✅ done |
 | 6 | Earth orbit + TLI maneuver node | ✅ done |
-| 7 | Cruise (patched conic, MCC, warp) | ⏳ next |
-| 8 | LOI + landing | ☐ — **pause after this** |
+| 7 | Cruise (patched conic, MCC, warp) | ✅ done |
+| 8 | LOI + landing | ⏳ next — **pause after this** |
 | 9 | Return: ascent, TEI, reentry, splashdown | ☐ |
 | 10 | Scoring/failure analysis + replay w/ telemetry graphs | ☐ |
 | 11 | Campaign polish, free-play states, perf | ☐ |
@@ -133,8 +133,15 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
   auto TLI (planTli → refineNodeFinite), completes 60 s after a burn that yields a lunar encounter; scored on
   lunar periapsis, Δv vs impulsive ideal, flight time. Free-play preset = autopilot ascent (`orbitPreset`).
 
+### M7 — Cruise + MCC (done)
+- `CruiseScreen` rebuilt on `OrbitalScreen`: maneuver tool, `planLunarCorrection` (scan prograde → radial → normal
+  components, log-spaced, smallest bracket, bisection; impulsive), phase ends 1 h before lunar periapsis
+  (`phaseEndTime` drives warp limiting), fails on impact/miss. Scored on periapsis accuracy + correction Δv.
+- Presets: `vehicleAfterDv`, `cruiseVehicle` (orbit preset minus TLI Δv).
+- E2E: free-play cruise plans a 1.8 m/s MCC and arrives at 110.0 km.
+
 ## Next steps
-M7: rebuild `CruiseScreen` on `OrbitalScreen` with an MCC planner (solve prograde/radial component for 110 km
- prograde periapsis via `refineNodeFinite`-style bisection), keep end 1 h before periapsis; carry vehicle.
-M8: lunar orbit insertion (circularize at periapsis, retrograde) + DOI + powered descent on procedural terrain,
-then PAUSE.
+M8: `LandingScreen` with two modes. (a) Orbital (OrbitalScreen-like, Moon SOI): LOI planner (circularize at
+periapsis, retrograde), DOI planner (lower periapsis to ~15 km). (b) Powered descent: Moon-centered RK4 with
+terrain heightfield (JS noise + craters + boulders), manual throttle/pitch, landing radar, hazards (slope, boulders),
+fuel limit, touchdown evaluation vs leg limits, scored debrief. Then PAUSE with summary + Windows commands.

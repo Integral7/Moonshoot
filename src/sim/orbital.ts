@@ -419,3 +419,53 @@ export function refineNodeFinite(
   }
   return { t: Number.isFinite(g1) ? t1 : 0.5 * (lo + hi), dv: n.dv };
 }
+
+/**
+ * Plan a small correction burn at `tNode` that puts the lunar periapsis at
+ * `targetAltitude` on a prograde (counter-clockwise) approach. Tries prograde,
+ * then radial, then normal components and picks the smallest burn that works.
+ */
+export function planLunarCorrection(f: OrbitalFlight, tNode: number, targetAltitude = 110e3, maxDv = 120): ManeuverNode | null {
+  const at = coastTo(f.s, tNode, f.eph);
+  const target = BODIES.moon.radius + targetAltitude;
+  let best: ManeuverNode | null = null;
+  for (const comp of ['prograde', 'radial', 'normal'] as const) {
+    const objective = (x: number) => {
+      const dv: NodeDeltaV = { prograde: 0, normal: 0, radial: 0 };
+      dv[comp] = x;
+      const after: OrbitState = { ...at, v: add(at.v, nodeToInertial(at.r, at.v, dv)) };
+      const ap = lunarApproach(predictTrajectory(after, 9 * 86400, { eph: f.eph, maxSegments: 2, maxAngleStep: 0.05 }));
+      return ap ? ap.signedRadius - target : NaN;
+    };
+    // Samples densest near zero, both signs.
+    const xs: number[] = [0];
+    for (let a = 0.05; a <= maxDv; a *= 1.35) xs.push(a, -a);
+    xs.sort((p, q) => p - q);
+    const fs = xs.map(objective);
+    let bracket: [number, number] | null = null;
+    for (let i = 0; i + 1 < xs.length; i++) {
+      if (!Number.isFinite(fs[i]) || !Number.isFinite(fs[i + 1]) || Math.sign(fs[i]) === Math.sign(fs[i + 1])) continue;
+      // Reject jumps across the SOI-miss discontinuity.
+      if (Math.abs(fs[i] - fs[i + 1]) > 3 * BODIES.moon.soi) continue;
+      if (!bracket || Math.min(Math.abs(xs[i]), Math.abs(xs[i + 1])) < Math.min(Math.abs(bracket[0]), Math.abs(bracket[1]))) bracket = [xs[i], xs[i + 1]];
+    }
+    if (!bracket) continue;
+    let [lo, hi] = bracket;
+    let fLo = objective(lo);
+    for (let k = 0; k < 50 && hi - lo > 1e-4; k++) {
+      const mid = 0.5 * (lo + hi);
+      const fm = objective(mid);
+      if (!Number.isFinite(fm)) break;
+      if (Math.sign(fm) === Math.sign(fLo)) {
+        lo = mid;
+        fLo = fm;
+      } else hi = mid;
+    }
+    const x = 0.5 * (lo + hi);
+    const dv: NodeDeltaV = { prograde: 0, normal: 0, radial: 0 };
+    dv[comp] = x;
+    if (!best || Math.abs(x) < nodeMagnitude(best.dv)) best = { t: tNode, dv };
+    if (Math.abs(x) < 5) break; // good enough, skip the other axes
+  }
+  return best;
+}

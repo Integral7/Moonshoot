@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { boot, cmd, state, trackErrors, waitFrames } from './helpers';
 
-test('free play: cruise phase coasts to the Moon under time warp and shows a debrief', async ({ page }) => {
+test('free play cruise: plan and fly a mid-course correction, arrive at 110 km', async ({ page }) => {
+  test.setTimeout(240_000);
   const errors = trackErrors(page);
   await boot(page, 'low');
   await page.click('#btn-freeplay');
@@ -9,18 +10,22 @@ test('free play: cruise phase coasts to the Moon under time warp and shows a deb
   await waitFrames(page, 5);
   let s = await state(page);
   expect(s.screen).toBe('cruise');
-  expect(s.phase).toBe('cruise');
+  expect(s.startPe as number).toBeGreaterThan(500e3);
   await page.screenshot({ path: 'e2e/screenshots/cruise-start.png' });
-
-  // Warp as fast as allowed until the phase ends (warp auto-limits near events).
-  const deadline = Date.now() + 90_000;
+  const r = (await cmd(page, 'plan', 'mcc')) as Record<string, unknown>;
+  expect(r.error).toBeUndefined();
+  await cmd(page, 'execute');
+  await cmd(page, 'fast', true);
+  const deadline = Date.now() + 180_000;
   while (!(s.ended as boolean) && Date.now() < deadline) {
     await cmd(page, 'warp', s.maxWarp);
     await waitFrames(page, 3);
     s = await state(page);
   }
   expect(s.ended).toBe(true);
+  expect(s.success).toBe(true);
   expect(s.body).toBe('moon');
+  expect(Math.abs((s.moonPe as number) - 110e3)).toBeLessThan(15e3);
   await expect(page.locator('#results-panel')).toBeVisible();
   await page.screenshot({ path: 'e2e/screenshots/cruise-results.png' });
   expect(errors).toEqual([]);

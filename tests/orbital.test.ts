@@ -60,3 +60,22 @@ describe('orbital flight', () => {
     expect(f.halted?.kind).toBe('atmosphere');
   });
 });
+
+describe('mid-course correction planner', () => {
+  it('corrects the free-play cruise (900 km) to a 110 km lunar periapsis with a few m/s', async () => {
+    const { cruisePreset, cruiseVehicle } = await import('../src/sim/presets');
+    const { planLunarCorrection } = await import('../src/sim/orbital');
+    const p = cruisePreset();
+    const f = new OrbitalFlight(p.orbit, cruiseVehicle(), p.eph);
+    const node = planLunarCorrection(f, f.t + 1800)!;
+    expect(node).not.toBeNull();
+    const mag = Math.hypot(node.dv.prograde, node.dv.normal, node.dv.radial);
+    expect(mag).toBeLessThan(20);
+    f.setNode(node);
+    f.executeNode();
+    f.advance(node.t - f.t + 120);
+    const ap = lunarApproach(f.predict(8 * 86400))!;
+    expect(Math.abs(ap.periapsis - 110e3)).toBeLessThan(10e3);
+    expect(ap.signedRadius).toBeGreaterThan(0);
+  });
+});

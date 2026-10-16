@@ -7,7 +7,7 @@ import { applyBurn, planTli, stateAt } from '../physics/planner';
 import type { OrbitState } from '../physics/patched';
 import { vec } from '../physics/vec';
 import { flyAscent } from './ascent';
-import { DEFAULT_DESIGN, type VehicleState } from './vehicle';
+import { DEFAULT_DESIGN, Vehicle, type VehicleState } from './vehicle';
 
 export const PARKING_ALTITUDE = 185e3;
 
@@ -65,4 +65,37 @@ export function orbitPreset(): OrbitPreset {
     orbitCache = { orbit: sim.orbitState(), vehicle: structuredClone(sim.vehicle.state), eph: STANDARD_EPHEMERIS };
   }
   return structuredClone(orbitCache);
+}
+
+/**
+ * Burn `dv` (m/s, vacuum) from a vehicle state using its stages in order,
+ * staging when a stage runs dry. Used to build plausible free-play states.
+ */
+export function vehicleAfterDv(state: VehicleState, dv: number): VehicleState {
+  const v = new Vehicle(structuredClone(state));
+  let rem = dv;
+  let guard = 0;
+  while (rem > 0.01 && guard++ < 20) {
+    const e = v.stageInfo?.engine;
+    if (!e || v.prop <= 0) {
+      if (!v.separate()) break;
+      continue;
+    }
+    const ve = e.ispVac * 9.80665;
+    const m0 = v.mass;
+    const dvStage = ve * Math.log(m0 / (m0 - v.prop));
+    if (dvStage >= rem) {
+      v.consume(m0 * (1 - Math.exp(-rem / ve)));
+      rem = 0;
+    } else {
+      rem -= dvStage;
+      v.consume(v.prop);
+    }
+  }
+  return v.state;
+}
+
+/** Vehicle state on the translunar coast (after ascent, circularization and TLI). */
+export function cruiseVehicle(): VehicleState {
+  return vehicleAfterDv(orbitPreset().vehicle, 3_160);
 }

@@ -1,256 +1,165 @@
-import type * as THREE from 'three';
-import { BODIES, MOON, moonPosition, type Ephemeris } from '../physics/bodies';
-import { coast, predictTrajectory, toEci, type OrbitState, type Prediction } from '../physics/patched';
-import { timeToPeriapsis, stateToElements } from '../physics/kepler';
+import { MOON, moonPosition, type Ephemeris } from '../physics/bodies';
+import { toEci, type OrbitState } from '../physics/patched';
 import { len, sub } from '../physics/vec';
-import { MapView } from '../render/MapView';
 import type { Mission } from '../sim/mission';
-import { cruisePreset } from '../sim/presets';
-import { buildResult, toleranceScore, type Metric } from '../sim/scoring';
-import type { ChannelDef } from '../sim/telemetry';
-import { formatDistance, formatDuration, formatSpeed } from '../sim/time';
+import { OrbitalFlight, lunarApproach, planLunarCorrection } from '../sim/orbital';
+import { cruisePreset, cruiseVehicle } from '../sim/presets';
+import { buildResult, linearScore, toleranceScore, type Metric } from '../sim/scoring';
+import { formatDistance, formatDuration } from '../sim/time';
+import type { VehicleState } from '../sim/vehicle';
 import type { TelemetryRow } from '../ui/Hud';
-import { h } from '../ui/dom';
-import { FlightScreen, WARP_LEVELS } from './FlightScreen';
+import type { Planner } from '../ui/ManeuverPanel';
+import { OrbitalScreen } from './OrbitalScreen';
+
+const LUNAR_TARGET = 110e3;
 
 interface CruiseSnapshot {
-  body: 'earth' | 'moon';
   earthDist: number;
   moonDist: number;
   moonPe: number;
   impact: boolean;
+  noEncounter: boolean;
 }
 
-/** Phase 4: translunar coast with patched conics and time warp. */
-export class CruiseScreen extends FlightScreen<CruiseSnapshot> {
+/** Phase 4: translunar coast with time warp and mid-course corrections. */
+export class CruiseScreen extends OrbitalScreen<CruiseSnapshot> {
   readonly id = 'cruise';
-  private map!: MapView;
-  private s!: OrbitState;
-  private eph!: Ephemeris;
-  private prediction: Prediction | null = null;
-  private predictTimer = 0;
-  private moonPe = NaN;
-  private moonPeTime = NaN;
-  private impact = false;
-  private nextEventTime = Infinity;
+  private startPe = NaN;
 
   constructor(mission: Mission) {
     super(mission);
   }
 
-  protected setup(): void {
+  protected initialFlight(): OrbitalFlight {
     const carried = this.mission.carry.flight as { orbit: OrbitState; eph: Ephemeris } | undefined;
-    const start = carried ?? cruisePreset();
-    this.s = start.orbit;
-    this.eph = start.eph;
-    this.t = this.s.t;
-    this.map = new MapView(this.app, this.ui);
-    this.map.world.eph = this.eph;
+    const vehicle = this.mission.carry.vehicle as VehicleState | undefined;
+    if (carried && vehicle) return new OrbitalFlight(carried.orbit, vehicle, carried.eph);
+    const p = cruisePreset();
+    return new OrbitalFlight(p.orbit, cruiseVehicle(), p.eph);
+  }
+
+  protected override phaseSetup(): void {
     this.map.setFocus('earth');
     this.map.cam.setDistance(9e8, true);
     this.map.cam.setAngles(0.4, 1.1, true);
     this.repredict();
-
-    this.hud.setControls(
-      h('button', { class: 'btn btn-small', id: 'btn-focus', text: 'Focus: Earth', onclick: (e) => this.cycleFocus(e.currentTarget as HTMLButtonElement) }),
-      h('button', { class: 'btn btn-small', id: 'btn-warp-max', text: 'Warp to Moon', onclick: () => this.setWarpLevel(this.maxWarp()) }),
-    );
-    this.hud.setHint('Drag to orbit, wheel to zoom. Tab: change focus. , and . change time warp. Esc: menu.');
-
-    const pe = this.moonPe;
-    if (this.impact) this.callouts.say(this.t, 'FIDO', 'Flight, translunar trajectory confirmed, but it intersects the Moon.', 'warn');
-    else if (Number.isFinite(pe)) this.callouts.say(this.t, 'FIDO', `Flight, translunar trajectory confirmed. Predicted lunar periapsis ${formatDistance(pe)}.`);
-    else this.callouts.say(this.t, 'FIDO', 'Flight, the trajectory does not reach the Moon.', 'warn');
+    const ap = this.approach();
+    this.startPe = ap ? ap.periapsis : NaN;
+    if (!ap) this.callouts.say(this.t, 'FIDO', 'Flight, the trajectory does not reach the Moon. We need a correction.', 'bad');
+    else if (ap.impact) this.callouts.say(this.t, 'FIDO', 'Flight, translunar trajectory confirmed, but it intersects the Moon. Recommend a mid-course correction.', 'warn');
+    else this.callouts.say(this.t, 'FIDO', `Flight, translunar trajectory confirmed. Predicted lunar periapsis ${formatDistance(ap.periapsis)}.`);
     this.callouts.addRules([
-      {
-        id: 'halfway',
-        role: 'CAPCOM',
-        text: "You're now closer to the Moon than to the Earth.",
-        when: (s) => s.moonDist < s.earthDist,
-      },
+      { id: 'halfway', role: 'CAPCOM', text: "You're now closer to the Moon than to the Earth.", when: (s) => s.moonDist < s.earthDist },
       {
         id: 'pe-low',
         role: 'FIDO',
         kind: 'warn',
         text: (s) => `Predicted periapsis is low at ${formatDistance(s.moonPe)}. Recommend a mid-course correction.`,
         when: (s) => !s.impact && Number.isFinite(s.moonPe) && s.moonPe < 60e3,
+        rearm: (s) => s.moonPe > 80e3,
       },
-      {
-        id: 'impact',
-        role: 'FIDO',
-        kind: 'bad',
-        text: 'Flight, current trajectory intersects the lunar surface.',
-        when: (s) => s.impact,
-      },
+      { id: 'impact', role: 'FIDO', kind: 'bad', text: 'Flight, current trajectory intersects the lunar surface.', when: (s) => s.impact, rearm: (s) => !s.impact },
     ]);
   }
 
-  private cycleFocus(btn: HTMLButtonElement): void {
-    const f = this.map.cycleFocus();
-    btn.textContent = `Focus: ${f === 'vessel' ? 'Spacecraft' : f === 'earth' ? 'Earth' : 'Moon'}`;
+  protected planners(): Planner[] {
+    return [
+      {
+        id: 'mcc',
+        label: 'Plan MCC (110 km)',
+        title: 'Smallest correction (prograde, radial or normal) for a 110 km prograde lunar periapsis',
+        run: () => {
+          const t = this.flight.node?.t ?? this.t + 900;
+          const n = planLunarCorrection(this.flight, Math.max(t, this.t + 120), LUNAR_TARGET);
+          if (!n) return 'No correction under 120 m/s found from this point.';
+          const mag = Math.hypot(n.dv.prograde, n.dv.normal, n.dv.radial);
+          this.callouts.say(this.t, 'FIDO', `Mid-course correction: ${mag.toFixed(2)} m/s.`);
+          return n;
+        },
+      },
+    ];
   }
 
-  private repredict(): void {
-    this.prediction = predictTrajectory(this.s, 10 * 86400, { eph: this.eph, maxSegments: 3 });
-    const pe = this.prediction.events.find((e) => e.kind === 'periapsis' && e.body === 'moon');
-    const imp = this.prediction.events.find((e) => e.kind === 'impact' && e.body === 'moon');
-    this.impact = !!imp;
-    this.moonPe = pe ? pe.altitude : imp ? 0 : NaN;
-    this.moonPeTime = pe ? pe.t : imp ? imp.t : NaN;
-    const future = this.prediction.events.filter((e) => e.t > this.t + 1).map((e) => e.t);
-    this.nextEventTime = future.length ? Math.min(...future) : Infinity;
-    this.map.vesselBody = this.s.body;
-    this.map.setPrediction(this.prediction);
+  protected predictionHorizon(): number {
+    return 9 * 86400;
   }
 
-  protected maxWarp(): number {
-    // Drop out of warp ahead of events (SOI change, periapsis, end of phase).
-    const endT = this.endTime();
-    const nextT = Math.min(this.nextEventTime, endT);
-    const dt = nextT - this.t;
-    let max = 1;
-    // Coasting is exact at any warp; this only gives the player ~0.5 s to see the event coming.
-    for (const w of WARP_LEVELS) if (w * 0.5 < dt) max = w;
-    return max;
+  protected nodeResult(): { text: string; cls?: string }[] {
+    if (!this.planned) return [];
+    const ap = lunarApproach(this.planned);
+    if (!ap) return [{ text: 'No lunar encounter', cls: 'bad' }];
+    return [{ text: ap.impact ? 'Moon: IMPACT' : `Moon periapsis ${formatDistance(ap.periapsis)}${ap.signedRadius < 0 ? ' (retrograde)' : ''}`, cls: ap.impact ? 'bad' : Math.abs(ap.periapsis - LUNAR_TARGET) < 20e3 ? 'good' : 'warn' }];
   }
 
-  /** Phase ends one hour before lunar periapsis (handover to LOI). */
-  private endTime(): number {
-    return Number.isFinite(this.moonPeTime) ? this.moonPeTime - 3600 : Infinity;
+  private approach() {
+    return this.prediction ? lunarApproach(this.prediction) : null;
   }
 
-  protected simulate(dt: number): void {
-    if (dt <= 0) return;
-    const endT = this.endTime();
-    const step = Math.min(dt, Math.max(0, endT - this.t));
-    if (step > 0) {
-      const res = coast(this.s, step, { eph: this.eph });
-      const prevBody = this.s.body;
-      this.s = res.state;
-      this.t = this.s.t;
-      for (const ev of res.events) {
-        if (ev.kind === 'soi-enter') {
-          this.callouts.say(ev.t, 'FIDO', 'Flight, we have crossed into the lunar sphere of influence.', 'good');
-          this.telemetry.mark(ev.t, 'Lunar SOI');
-        } else if (ev.kind === 'impact') {
-          this.fail('The spacecraft impacted the lunar surface.');
-          return;
-        }
-      }
-      if (prevBody !== this.s.body) this.repredict();
-    }
-    if (this.t >= endT - 1e-6) this.complete();
+  protected phaseRows(): TelemetryRow[] {
+    const eci = toEci(this.flight.s, this.flight.eph);
+    const moonD = len(sub(eci, moonPosition(this.t, this.flight.eph))) - MOON.radius;
+    const ap = this.approach();
+    return [
+      { id: 'moon', label: 'Moon distance', value: formatDistance(moonD) },
+      { id: 'moonpe', label: 'Lunar periapsis', value: !ap ? 'NO ENCOUNTER' : ap.impact ? 'IMPACT' : formatDistance(ap.periapsis), cls: !ap || ap.impact ? 'bad' : ap.periapsis < 60e3 ? 'warn' : 'good' },
+      { id: 'tpe', label: 'Time to periapsis', value: ap ? formatDuration(ap.time - this.t) : '--' },
+    ];
+  }
+
+  protected statusText(): string {
+    return this.flight.s.body === 'moon' ? 'LUNAR APPROACH' : 'TRANSLUNAR COAST';
+  }
+
+  protected override onHalt(kind: 'atmosphere' | 'impact' | 'escape'): void {
+    if (kind === 'impact') this.fail('The spacecraft impacted the lunar surface.');
+    else if (kind === 'atmosphere') this.fail("The spacecraft fell back into Earth's atmosphere.");
+    else this.fail("The spacecraft left Earth's sphere of influence.");
+  }
+
+  protected checkPhase(): void {
+    const ap = this.approach();
+    // Hand over to lunar orbit insertion one hour before periapsis.
+    this.phaseEndTime = ap ? ap.time - 3600 : Infinity;
+    if (ap && this.t >= this.phaseEndTime - 1e-6 && !this.flight.isBurning && !this.flight.autoBurn) this.complete(ap);
+    if (!ap && this.flight.s.body === 'earth' && this.t > 10 * 86400) this.fail('The spacecraft missed the Moon.');
   }
 
   private fail(reason: string): void {
-    const result = buildResult('cruise', this.t, false, [], [reason], 'The translunar coast ended in a loss of vehicle.');
-    this.finish(result);
+    this.finish(buildResult('cruise', this.t, false, [], [reason], 'The translunar coast ended in a loss of mission.'));
   }
 
-  private complete(): void {
-    const pe = this.moonPe;
+  private complete(ap: { periapsis: number; impact: boolean; signedRadius: number }): void {
+    const pe = ap.periapsis;
     const findings: string[] = [];
-    const success = !this.impact && Number.isFinite(pe) && pe > 15e3;
-    if (this.impact) findings.push('Trajectory intersected the Moon; a mid-course correction was required.');
+    const success = !ap.impact && pe > 15e3;
+    if (ap.impact) findings.push('Trajectory intersected the Moon: a mid-course correction was required.');
     else if (pe < 15e3) findings.push(`Periapsis of ${formatDistance(pe)} is below safe terrain clearance (15 km).`);
-    if (Number.isFinite(pe) && Math.abs(pe - 110e3) > 30e3) findings.push(`Periapsis ${formatDistance(pe)} vs 110 km target: LOI will cost extra delta-v.`);
+    if (ap.signedRadius < 0) findings.push('Retrograde lunar approach: insertion works, but the landing site lighting will differ.');
+    if (Number.isFinite(pe) && Math.abs(pe - LUNAR_TARGET) > 30e3) findings.push(`Periapsis ${formatDistance(pe)} vs 110 km target: lunar orbit insertion will cost extra delta-v.`);
     const metrics: Metric[] = [
-      { label: 'Lunar periapsis', value: formatDistance(pe), score: toleranceScore(pe, 110e3, 10e3, 200e3), weight: 3, target: 'Target 110 km (full marks within 10 km)' }
+      { label: 'Lunar periapsis', value: formatDistance(pe), score: toleranceScore(pe, LUNAR_TARGET, 10e3, 300e3), weight: 3, target: 'Target 110 km (full marks within 10 km)' },
+      { label: 'Correction delta-v', value: `${this.flight.dvUsed.toFixed(1)} m/s`, score: linearScore(this.flight.dvUsed, 10, 80), weight: 2, target: 'Budget 60 m/s; under 10 is excellent' },
     ];
     this.finish(
-      buildResult('cruise', this.t, success, metrics, findings, success ? 'Arrived at the Moon on a safe approach trajectory, ready for lunar orbit insertion.' : 'The approach is not survivable.'),
-      { flight: { orbit: this.s, eph: this.eph } },
+      buildResult('cruise', this.t, success, metrics, findings, success ? `Arrived at the Moon on a ${formatDistance(pe)} approach, ready for lunar orbit insertion.` : 'The approach is not survivable.'),
+      { vehicle: structuredClone(this.flight.vehicle.state), flight: { orbit: this.flight.s, eph: this.flight.eph } },
     );
   }
 
-  protected telemetryRows(): TelemetryRow[] {
-    const body = BODIES[this.s.body];
-    const eci = toEci(this.s, this.eph);
-    const moonD = len(sub(eci, moonPosition(this.t, this.eph))) - MOON.radius;
-    const el = stateToElements(this.s.r, this.s.v, body.mu);
-    const tPe = this.s.body === 'moon' ? timeToPeriapsis(el, body.mu) : this.moonPeTime - this.t;
-    return [
-      { id: 'frame', label: 'Reference', value: `${body.name} SOI` },
-      { id: 'alt', label: 'Altitude', value: formatDistance(len(this.s.r) - body.radius) },
-      { id: 'spd', label: 'Speed', value: formatSpeed(len(this.s.v)) },
-      { id: 'moon', label: 'Moon distance', value: formatDistance(moonD) },
-      { id: 'pe', label: 'Lunar periapsis', value: this.impact ? 'IMPACT' : formatDistance(this.moonPe), cls: this.impact ? 'bad' : this.moonPe < 60e3 ? 'warn' : 'good' },
-      { id: 'tpe', label: 'Time to periapsis', value: formatDuration(tPe) },
-    ];
-  }
-
-  protected telemetryChannels(): ChannelDef[] {
-    return [
-      { id: 'earthAlt', label: 'Earth altitude', unit: 'km', scale: 1e-3 },
-      { id: 'moonDist', label: 'Moon distance', unit: 'km', scale: 1e-3 },
-      { id: 'speed', label: 'Speed (frame)', unit: 'm/s' },
-    ];
-  }
-
-  protected telemetrySample(): Record<string, number> {
-    const eci = toEci(this.s, this.eph);
-    return {
-      earthAlt: len(eci) - BODIES.earth.radius,
-      moonDist: len(sub(eci, moonPosition(this.t, this.eph))) - MOON.radius,
-      speed: len(this.s.v),
-    };
-  }
-
   protected snapshot(): CruiseSnapshot {
-    const eci = toEci(this.s, this.eph);
+    const eci = toEci(this.flight.s, this.flight.eph);
+    const ap = this.approach();
     return {
-      body: this.s.body,
       earthDist: len(eci),
-      moonDist: len(sub(eci, moonPosition(this.t, this.eph))),
-      moonPe: this.moonPe,
-      impact: this.impact,
+      moonDist: len(sub(eci, moonPosition(this.t, this.flight.eph))),
+      moonPe: ap ? ap.periapsis : NaN,
+      impact: !!ap?.impact,
+      noEncounter: !ap,
     };
-  }
-
-  protected updateVisuals(dt: number): void {
-    this.predictTimer -= dt;
-    if (this.predictTimer <= 0) {
-      this.predictTimer = 2;
-      this.repredict();
-    }
-    this.map.vesselEci = toEci(this.s, this.eph);
-    this.map.update(this.t, dt);
-    this.hud.setStatus(this.ended ? '' : this.s.body === 'moon' ? 'LUNAR APPROACH' : 'TRANSLUNAR COAST', 'info');
-  }
-
-  render(renderer: THREE.WebGLRenderer): void {
-    this.map.render(renderer);
-  }
-
-  onQualityChange(): void {
-    this.map.onQualityChange();
-    this.repredict();
-  }
-
-  protected override onKey(e: KeyboardEvent, down: boolean): void {
-    if (down && e.key === 'Tab') {
-      e.preventDefault();
-      const btn = this.ui.querySelector<HTMLButtonElement>('#btn-focus');
-      if (btn) this.cycleFocus(btn);
-    }
-  }
-
-  protected override teardown(): void {
-    this.map.dispose();
   }
 
   protected override extraDebug(): Record<string, unknown> {
-    return { body: this.s.body, moonPe: this.moonPe, impact: this.impact, maxWarp: this.maxWarp() };
-  }
-
-  override debugCommand(cmd: string, arg?: unknown): unknown {
-    if (cmd === 'warp') this.setWarpLevel(Number(arg));
-    else if (cmd === 'focus') this.map.setFocus(arg as 'vessel' | 'earth' | 'moon');
-    else if (cmd === 'view') {
-      const v = arg as { distance: number; yaw?: number; pitch?: number };
-      this.map.cam.setDistance(v.distance, true);
-      if (v.yaw !== undefined) this.map.cam.setAngles(v.yaw, v.pitch ?? 0.3, true);
-    }
-    return this.debugState();
+    const ap = this.approach();
+    return { ...super.extraDebug(), moonPe: ap?.periapsis ?? null, impact: ap?.impact ?? false, startPe: this.startPe };
   }
 }

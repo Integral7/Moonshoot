@@ -1,25 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-
-// Collect console errors and page errors for the whole test.
-function trackErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console: ${msg.text()}`);
-  });
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
-  return errors;
-}
-
-async function state(page: Page): Promise<Record<string, unknown>> {
-  return page.evaluate(() => window.__moonshot!.state());
-}
-
-async function waitFrames(page: Page, n: number): Promise<void> {
-  const start = (await state(page)).frames as number;
-  await page.waitForFunction((target) => (window.__moonshot!.state().frames as number) >= target, start + n, {
-    timeout: 30_000,
-  });
-}
+import { expect, test } from '@playwright/test';
+import { state, trackErrors, waitFrames } from './helpers';
 
 test('boots to main menu and renders frames without errors', async ({ page }) => {
   const errors = trackErrors(page);

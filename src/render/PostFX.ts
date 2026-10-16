@@ -20,10 +20,11 @@ export class PostFX {
     private scene: THREE.Scene,
     private camera: THREE.Camera,
     private quality: () => QualityPreset,
-    public bloomStrength = 0.55,
+    public bloomStrength = 0.4,
   ) {}
 
   setSize(w: number, h: number): void {
+    if (w === this.width && h === this.height) return;
     this.width = w;
     this.height = h;
     this.composer?.setSize(w, h);
@@ -51,7 +52,7 @@ export class PostFX {
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(this.width, this.height);
     composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), this.bloomStrength, 0.6, 0.82);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), this.bloomStrength, 0.5, 0.88);
     composer.addPass(this.bloom);
     composer.addPass(new OutputPass());
     this.composer = composer;

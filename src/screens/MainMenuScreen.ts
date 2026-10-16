@@ -63,7 +63,7 @@ export class MainMenuScreen implements Screen {
       ),
       h('div', { class: 'menu-buttons' },
         h('button', { class: 'btn btn-primary', id: 'btn-campaign', text: 'Campaign', disabled: true, title: 'Coming in a later milestone' }),
-        h('button', { class: 'btn', id: 'btn-freeplay', text: 'Free Play', disabled: true, title: 'Coming in a later milestone' }),
+        h('button', { class: 'btn', id: 'btn-freeplay', text: 'Free Play', onclick: () => this.app.go('freeplay') }),
         h('button', { class: 'btn', id: 'btn-replays', text: 'Replays', disabled: true, title: 'Coming in a later milestone' }),
         h('button', { class: 'btn', id: 'btn-settings', text: 'Settings', onclick: () => this.openSettings() }),
       ),

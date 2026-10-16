@@ -1,5 +1,8 @@
 import './ui/styles.css';
 import { App } from './app/App';
+import { registerPhase } from './app/phases';
+import { CruiseScreen } from './screens/CruiseScreen';
+import { FreePlayScreen } from './screens/FreePlayScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 
 declare global {
@@ -8,6 +11,7 @@ declare global {
       app: App;
       errors: string[];
       state: () => Record<string, unknown>;
+      cmd: (cmd: string, arg?: unknown) => unknown;
     };
   }
 }
@@ -21,7 +25,14 @@ if (!root) throw new Error('#app root missing');
 
 const app = new App(root);
 app.registerScreen('menu', () => new MainMenuScreen());
+app.registerScreen('freeplay', () => new FreePlayScreen());
+registerPhase('cruise', (m) => new CruiseScreen(m));
 app.go('menu');
 app.start();
 
-window.__moonshot = { app, errors, state: () => app.debugState() };
+window.__moonshot = {
+  app,
+  errors,
+  state: () => app.debugState(),
+  cmd: (cmd, arg) => app.currentScreen?.debugCommand?.(cmd, arg),
+};

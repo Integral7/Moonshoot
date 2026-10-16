@@ -73,6 +73,7 @@ uniform samplerCube uHeight;
 uniform vec3 uSunDir;
 uniform float uBump;
 uniform float uTexel;
+uniform mat3 uRot;
 varying vec3 vObjDir;
 varying vec3 vWorldPos;
 void main() {
@@ -86,8 +87,8 @@ void main() {
   float h1 = textureCube(uHeight, normalize(n + t1 * e)).r;
   float h2 = textureCube(uHeight, normalize(n + t2 * e)).r;
   vec3 nObj = normalize(n - uBump * ((h1 - h0) * t1 + (h2 - h0) * t2) / e);
-  vec3 nW = normalize(mat3(modelMatrix) * nObj);
-  vec3 nGeo = normalize(mat3(modelMatrix) * n);
+  vec3 nW = normalize(uRot * nObj);
+  vec3 nGeo = normalize(uRot * n);
   vec3 l = normalize(uSunDir);
   vec3 v = normalize(cameraPosition - vWorldPos);
   float mu0 = max(dot(nW, l), 0.0);
@@ -129,9 +130,13 @@ export function createMoon(renderer: THREE.WebGLRenderer, q: QualityPreset, radi
       uSunDir: { value: sunDir },
       uBump: { value: 0.06 },
       uTexel: { value: 1.5 / face },
+      uRot: { value: new THREE.Matrix3() },
     },
   });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, seg, seg / 2), mat);
+  mesh.onBeforeRender = () => {
+    mat.uniforms.uRot.value.setFromMatrix4(mesh.matrixWorld);
+  };
   mesh.name = 'moon-surface';
   spin.add(mesh);
   return {

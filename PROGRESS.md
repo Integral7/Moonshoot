@@ -38,8 +38,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 |---|---|---|
 | 1 | Scaffold, tooling, quality framework, headless harness | ✅ done |
 | 2 | Physics core + unit tests | ✅ done |
-| 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ⏳ next |
-| 4 | Vehicle design (VAB) | ☐ — **pause after this** |
+| 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ✅ done |
+| 4 | Vehicle design (VAB) | ⏳ next — **pause after this** |
 | 5 | Launch | ☐ |
 | 6 | Earth orbit + TLI maneuver node | ☐ |
 | 7 | Cruise (patched conic, MCC, warp) | ☐ |
@@ -71,7 +71,25 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
   module purity guard.
 - Note: Allen-Eggers is only valid for steep entries; shallow supercircular ballistic entry simulates at ~14 g.
 
+### M3 — Game shell + world (done)
+- `src/sim/`: `time.ts` (MET formatting), `callouts.ts` (rule-based flight director callouts, once/re-arm), `telemetry.ts`
+  (adaptive-interval recorder + interpolation), `scoring.ts` (weighted metrics, ratings, failure cap), `mission.ts`
+  (6-phase state machine, carry state + retry snapshots), `presets.ts` (free-play states; `STANDARD_EPHEMERIS`).
+- `src/physics/planner.ts`: `planTli` solves TLI burn time for a target lunar periapsis (signed-periapsis bisection).
+- Kepler fix: Laguerre-Conway iteration (Newton diverged on long high-e propagations) + regression test.
+- Render: `bake.ts` GPU cube-map baking (seamless) with cache (`userData.shared` textures are never disposed by screens);
+  `earth.ts` (continents/biomes/ice, ocean specular, city lights, clouds, atmosphere shell), `moon.ts` (crater layers,
+  maria on +X near side, lunar-Lambert shading, height bump), `World.ts` (floating origin; ECI→scene: x,z,-y),
+  `MapView.ts` (trajectory lines per SOI, ghost Moon at SOI entry, event markers+labels, focus cycling), `OrbitCamera`,
+  `PostFX` (bloom on medium/high), `sun.ts`.
+- UI: `Hud.ts` (MET, warp, telemetry rows, Mission Control log, toasts), `ResultsPanel.ts`, `Labels.ts`.
+- Screens: `FlightScreen` base (warp w/ auto-limit hook, pause menu, restart, debrief, debugCommand), `CruiseScreen`
+  (coast-only for now; ends 1 h before lunar periapsis), `FreePlayScreen`. Phase registry in `src/app/phases.ts`.
+- E2E: free-play cruise flown to completion under warp; Earth/Moon render screenshots at medium.
+- Notes: Sun fixed along ECI +X. Custom ShaderMaterials must include log-depth chunks (`glsl.ts` helpers);
+  `modelMatrix` is vertex-only — pass rotations as uniforms. Labels z-index below HUD.
+
 ## Next steps
-Start M3: phase state machine + mission/campaign model, mission control HUD (mission clock MET, flight-director callout log),
-results-screen framework, free-play menu, procedural Earth (noise continents, clouds, atmosphere rim) and Moon (craters),
-scale handling (floating origin / scene in km), camera controls.
+Start M4: vehicle design screen — parts catalog (capsule, service module, lander descent/ascent, tanks, engines,
+decouplers, chutes, heat shield, fairing), stack builder UI, live mass/thrust/TWR/Δv per stage, mission Δv budget
+allocation, procedural 3D vehicle preview; campaign entry from main menu. Then PAUSE for user go-ahead.

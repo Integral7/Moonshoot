@@ -94,3 +94,16 @@ describe('mission state machine', () => {
     expect(m.phase).toBe('landing');
   });
 });
+
+describe('free-play presets', () => {
+  it('cruise preset is on a safe lunar approach (~900 km periapsis)', async () => {
+    const { cruisePreset } = await import('../src/sim/presets');
+    const { predictTrajectory } = await import('../src/physics');
+    const p = cruisePreset();
+    const pred = predictTrajectory(p.orbit, 10 * 86400, { eph: p.eph });
+    const pe = pred.events.find((e) => e.kind === 'periapsis' && e.body === 'moon');
+    expect(pe).toBeDefined();
+    expect(pred.events.some((e) => e.kind === 'impact')).toBe(false);
+    expect(Math.abs(pe!.altitude - 900e3)).toBeLessThan(20e3);
+  });
+});

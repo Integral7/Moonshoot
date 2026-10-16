@@ -117,13 +117,13 @@ void main() {
   vec3 v = normalize(cameraPosition - vWorldPos);
   float ndl = dot(n, l);
   float day = smoothstep(-0.12, 0.2, ndl);
-  vec3 lit = c.rgb * max(ndl, 0.0) * 2.2;
+  vec3 lit = c.rgb * max(ndl, 0.0) * 1.7;
   vec3 h = normalize(l + v);
   float spec = pow(max(dot(n, h), 0.0), 80.0) * c.a * smoothstep(0.0, 0.1, ndl);
   vec3 night = vec3(1.0, 0.72, 0.38) * aux.r * (1.0 - day) * 2.5;
   float fres = pow(1.0 - max(dot(n, v), 0.0), 2.5);
   vec3 haze = vec3(0.28, 0.5, 1.0) * fres * smoothstep(-0.25, 0.4, ndl) * 0.9;
-  vec3 col = lit + spec * vec3(1.0, 0.9, 0.75) * 1.4 + night + haze;
+  vec3 col = lit + spec * vec3(1.0, 0.9, 0.75) * 0.55 + night + haze;
   gl_FragColor = vec4(col, 1.0);
   ${OUTPUT_FRAG}
 }
@@ -143,7 +143,7 @@ void main() {
   float ndl = dot(n, normalize(uSunDir));
   float lightAmt = smoothstep(-0.15, 0.35, ndl);
   vec3 sunset = mix(vec3(1.0, 0.55, 0.3), vec3(1.0), smoothstep(0.0, 0.35, ndl));
-  gl_FragColor = vec4(sunset * lightAmt * 1.1, a * 0.92);
+  gl_FragColor = vec4(sunset * lightAmt * 0.85, a * 0.9);
   ${OUTPUT_FRAG}
 }
 `;

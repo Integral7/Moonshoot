@@ -102,12 +102,17 @@ export function createStarfield(count: number, radius = 1e5, seed = 1969): THREE
   points.frustumCulled = false;
   points.renderOrder = -10;
   points.name = 'starfield';
+  points.userData.radius = radius;
   return points;
 }
 
 export function updateStarfield(stars: THREE.Points, time: number, camera: THREE.Camera): void {
   (stars.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
   stars.position.copy(camera.position);
+  // Keep the star sphere well beyond the near plane, which scales with zoom.
+  const near = (camera as THREE.PerspectiveCamera).near ?? 0.1;
+  const radius = (stars.userData.radius as number) ?? 1e5;
+  stars.scale.setScalar(Math.max(1, (near * 1000) / radius));
 }
 
 export function disposeObject(obj: THREE.Object3D): void {
@@ -122,9 +127,9 @@ export function disposeObject(obj: THREE.Object3D): void {
 
 function disposeMaterial(m: THREE.Material): void {
   for (const value of Object.values(m)) {
-    if (value instanceof THREE.Texture) value.dispose();
+    if (value instanceof THREE.Texture && !value.userData.shared) value.dispose();
   }
   const u = (m as THREE.ShaderMaterial).uniforms;
-  if (u) for (const k of Object.keys(u)) if (u[k].value instanceof THREE.Texture) u[k].value.dispose();
+  if (u) for (const k of Object.keys(u)) if (u[k].value instanceof THREE.Texture && !u[k].value.userData.shared) u[k].value.dispose();
   m.dispose();
 }

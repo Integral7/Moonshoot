@@ -172,3 +172,17 @@ describe('maneuvers', () => {
     expect(vHyp - Math.sqrt(MU_MOON / rp)).toBeGreaterThan(700);
   });
 });
+
+describe('TLI planner', () => {
+  it('targets a 110 km prograde lunar periapsis from a 185 km parking orbit', async () => {
+    const { planTli } = await import('../../src/physics/planner');
+    const s: OrbitState = { body: 'earth', t: 0, r: vec(rPark, 0, 0), v: vec(0, vPark, 0) };
+    const plan = planTli(s, { eph: { moonAngle0: 2.0, earthAngle0: 0 }, targetAltitude: 110e3 })!;
+    expect(plan).not.toBeNull();
+    expect(plan.dv.prograde / 1000).toBeGreaterThan(3.1);
+    expect(plan.dv.prograde / 1000).toBeLessThan(3.2);
+    expect(Math.abs(plan.periapsisAltitude - 110e3)).toBeLessThan(2e3);
+    expect(plan.arrivalTime / DAY).toBeGreaterThan(2.5);
+    expect(plan.arrivalTime / DAY).toBeLessThan(6);
+  });
+});

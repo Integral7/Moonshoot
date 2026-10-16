@@ -184,17 +184,25 @@ export function propagateKepler(r0: Vec3, v0: Vec3, dt: number, mu: number): Sta
     chi = (sqmu * dt) / r0m;
   }
 
+  // Laguerre-Conway iteration: converges from poor starting guesses where plain
+  // Newton diverges (long propagations of high-eccentricity orbits).
   let z = 0, C = 0.5, S = 1 / 6;
+  const k1 = (r0m * vr0) / sqmu;
+  const k2 = 1 - alpha * r0m;
+  const n = 5;
   for (let iter = 0; iter < 200; iter++) {
     z = alpha * chi * chi;
     C = stumpffC(z);
     S = stumpffS(z);
     const chi2 = chi * chi;
-    const F = ((r0m * vr0) / sqmu) * chi2 * C + (1 - alpha * r0m) * chi2 * chi * S + r0m * chi - sqmu * dt;
-    const dF = ((r0m * vr0) / sqmu) * chi * (1 - z * S) + (1 - alpha * r0m) * chi2 * C + r0m;
-    const step = F / dF;
+    const F = k1 * chi2 * C + k2 * chi2 * chi * S + r0m * chi - sqmu * dt;
+    const dF = k1 * chi * (1 - z * S) + k2 * chi2 * C + r0m;
+    const ddF = k1 * (1 - z * C) + k2 * chi * (1 - z * S);
+    const disc = Math.sqrt(Math.abs((n - 1) * (n - 1) * dF * dF - n * (n - 1) * F * ddF));
+    const denom = dF + (dF >= 0 ? disc : -disc);
+    const step = denom !== 0 ? (n * F) / denom : F / dF;
     chi -= step;
-    if (Math.abs(step) < 1e-9 * Math.max(1, Math.abs(chi))) break;
+    if (Math.abs(step) < 1e-10 * Math.max(1, Math.abs(chi))) break;
   }
   z = alpha * chi * chi;
   C = stumpffC(z);

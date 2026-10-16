@@ -22,4 +22,6 @@ export interface Screen {
   onQualityChange?(): void;
   /** Debug/e2e state snapshot. */
   debugState?(): Record<string, unknown>;
+  /** Debug/e2e commands (e.g. engage an autopilot, set warp). */
+  debugCommand?(cmd: string, arg?: unknown): unknown;
 }

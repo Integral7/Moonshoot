@@ -11,3 +11,4 @@ export * from './dynamics';
 export * from './maneuver';
 export * from './lambert';
 export * from './patched';
+export * from './planner';

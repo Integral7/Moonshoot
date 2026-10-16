@@ -83,6 +83,23 @@ describe('universal-variable propagation', () => {
     expect(len(sub(p2.r, p3.r))).toBeLessThan(1);
   });
 
+  it('converges for long propagations of a high-eccentricity TLI orbit (regression)', () => {
+    // 185 km perigee, apogee beyond the Moon: e ~ 0.97. Newton from the naive guess diverged here.
+    const rp = R_EARTH + 185e3;
+    const ra = 488_000e3;
+    const a = (rp + ra) / 2;
+    const vp = Math.sqrt(MU_EARTH * (2 / rp - 1 / a));
+    const T = 2 * Math.PI * Math.sqrt(a ** 3 / MU_EARTH);
+    for (const frac of [0.05, 0.2, 0.37, 0.5, 0.63, 0.9]) {
+      const p = propagateKepler(vec(rp, 0, 0), vec(0, vp, 0), frac * T, MU_EARTH);
+      const el = stateToElements(p.r, p.v, MU_EARTH);
+      expect(el.a / a).toBeCloseTo(1, 8);
+      expect(len(p.r)).toBeLessThanOrEqual(ra * (1 + 1e-9));
+    }
+    const apo = propagateKepler(vec(rp, 0, 0), vec(0, vp, 0), T / 2, MU_EARTH);
+    expect(len(apo.r) / ra).toBeCloseTo(1, 7);
+  });
+
   it('is reversible (forward then backward)', () => {
     const r0 = vec(R_MOON + 15e3, 0, 0);
     const v0 = vec(0, 2500, 300); // hyperbolic about the Moon

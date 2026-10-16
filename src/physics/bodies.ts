@@ -88,7 +88,7 @@ export function earthRotation(t: number, eph: Ephemeris = DEFAULT_EPHEMERIS): nu
 }
 
 /**
- * Moon rotation angle at time t. Tidally locked: the Moon's body-fixed -X axis
+ * Moon rotation angle at time t. Tidally locked: the Moon's body-fixed +X axis
  * (selenographic 0,0, the near side) always points at Earth.
  */
 export function moonRotation(t: number, eph: Ephemeris = DEFAULT_EPHEMERIS): number {

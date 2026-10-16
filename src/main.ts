@@ -2,6 +2,7 @@ import './ui/styles.css';
 import { App } from './app/App';
 import { registerPhase } from './app/phases';
 import { CruiseScreen } from './screens/CruiseScreen';
+import { DesignScreen } from './screens/DesignScreen';
 import { FreePlayScreen } from './screens/FreePlayScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 
@@ -26,6 +27,7 @@ if (!root) throw new Error('#app root missing');
 const app = new App(root);
 app.registerScreen('menu', () => new MainMenuScreen());
 app.registerScreen('freeplay', () => new FreePlayScreen());
+registerPhase('design', (m) => new DesignScreen(m));
 registerPhase('cruise', (m) => new CruiseScreen(m));
 app.go('menu');
 app.start();

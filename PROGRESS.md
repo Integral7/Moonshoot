@@ -39,8 +39,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 1 | Scaffold, tooling, quality framework, headless harness | ✅ done |
 | 2 | Physics core + unit tests | ✅ done |
 | 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ✅ done |
-| 4 | Vehicle design (VAB) | ⏳ next — **pause after this** |
-| 5 | Launch | ☐ |
+| 4 | Vehicle design (VAB) | ✅ done — **paused for user go-ahead** |
+| 5 | Launch | ⏳ next (after go-ahead) |
 | 6 | Earth orbit + TLI maneuver node | ☐ |
 | 7 | Cruise (patched conic, MCC, warp) | ☐ |
 | 8 | LOI + landing | ☐ — **pause after this** |
@@ -89,7 +89,25 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - Notes: Sun fixed along ECI +X. Custom ShaderMaterials must include log-depth chunks (`glsl.ts` helpers);
   `modelMatrix` is vertex-only — pass rotations as uniforms. Labels z-index below HUD.
 
-## Next steps
-Start M4: vehicle design screen — parts catalog (capsule, service module, lander descent/ascent, tanks, engines,
-decouplers, chutes, heat shield, fairing), stack builder UI, live mass/thrust/TWR/Δv per stage, mission Δv budget
-allocation, procedural 3D vehicle preview; campaign entry from main menu. Then PAUSE for user go-ahead.
+### M4 — Vehicle design (done)
+- `src/sim/parts.ts`: catalog (capsules, heat shields, chutes, LES, S/M/L tanks, F-1/J-2/RL10/SPS/DPS/methalox engines,
+  decouplers, legs) with Saturn/Apollo-class numbers.
+- `src/sim/vehicle.ts`: `analyzeDesign` (stages split at decouplers; decoupler goes with the stage below; LES counted
+  only during stage 1; engine clusters combined by mass flow; per-stage Δv vac/ascent, TWR Earth/Moon, burn time;
+  validation errors/warnings), `allocateBudget` (walks `MISSION_LEGS` consuming stage Δv in firing order; landing
+  stage must have legs, is left on the Moon), `TEMPLATES` (Nova-class recommended: direct return needs ~5,000 t —
+  historically why Apollo chose LOR; Methalox light 2-crew), runtime `VehicleState` (plain JSON) + `Vehicle` helper
+  (mass, staging, LES jettison, throttle limits, Δv remaining, Cd·A, L/D, chutes, heat shield, legs).
+- `src/render/vehicleMesh.ts`: procedural model per stage (panel/roll-pattern canvas textures, bell nozzles via
+  lathe, `clusterLayout` ring packing, interstages, LES, legs, hidden parachute canopies); nozzle positions for plumes.
+- `src/screens/DesignScreen.ts`: palette, run-grouped stack editor (+/−/▲/▼/✕), stage headers with roles, live
+  stats + budget table + issues, 3D preview with selection box, templates, localStorage WIP; approve → scored debrief
+  → carry.design. `src/app/flow.ts` shared continue/retry/menu actions (continue disabled for unbuilt phases).
+- Campaign button now starts at Vehicle Design.
+
+## Next steps (M5, after user go-ahead)
+Launch phase: vehicle on equatorial pad (lat 0, lon 0 at t = 0 → matches parking orbit plane), RK4 flight with
+`flightDerivative` (drag vs rotating air, pressure-dependent thrust), pitch program/gravity turn controls
+(manual pitch + throttle, optional autopilot for e2e), max-Q callout, staging (Space), LES jettison, plumes and
+trails, sky color by altitude, telemetry graph, scoring (orbit accuracy, Δv used, max-Q, max g). Carry `vehicle`
+state + `flight.orbit` to Earth Orbit phase. Mission time: launch at t = 0 with `STANDARD_EPHEMERIS`.

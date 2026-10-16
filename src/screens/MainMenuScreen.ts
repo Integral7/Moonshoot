@@ -4,6 +4,8 @@ import type { Screen } from '../app/Screen';
 import { createStarfield, disposeObject, updateStarfield } from '../render/starfield';
 import { createSettingsPanel } from '../ui/SettingsPanel';
 import { h } from '../ui/dom';
+import { goToPhase } from '../app/flow';
+import { Mission } from '../sim/mission';
 
 export class MainMenuScreen implements Screen {
   readonly id = 'menu';
@@ -62,7 +64,7 @@ export class MainMenuScreen implements Screen {
         h('p', { class: 'subtitle', text: 'A lunar mission from the drawing board to splashdown' }),
       ),
       h('div', { class: 'menu-buttons' },
-        h('button', { class: 'btn btn-primary', id: 'btn-campaign', text: 'Campaign', disabled: true, title: 'Coming in a later milestone' }),
+        h('button', { class: 'btn btn-primary', id: 'btn-campaign', text: 'Campaign', onclick: () => goToPhase(this.app, new Mission('campaign', 'design')) }),
         h('button', { class: 'btn', id: 'btn-freeplay', text: 'Free Play', onclick: () => this.app.go('freeplay') }),
         h('button', { class: 'btn', id: 'btn-replays', text: 'Replays', disabled: true, title: 'Coming in a later milestone' }),
         h('button', { class: 'btn', id: 'btn-settings', text: 'Settings', onclick: () => this.openSettings() }),

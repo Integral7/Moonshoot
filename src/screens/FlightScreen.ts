@@ -2,12 +2,13 @@ import type * as THREE from 'three';
 import type { App } from '../app/App';
 import type { Screen } from '../app/Screen';
 import { createPhaseScreen } from '../app/phases';
+import { phaseEndActions } from '../app/flow';
 import { CalloutSystem } from '../sim/callouts';
 import { Mission, PHASES } from '../sim/mission';
 import type { PhaseResult } from '../sim/scoring';
 import { TelemetryRecorder, type ChannelDef } from '../sim/telemetry';
 import { Hud, type TelemetryRow } from '../ui/Hud';
-import { createResultsPanel, type ResultAction } from '../ui/ResultsPanel';
+import { createResultsPanel } from '../ui/ResultsPanel';
 import { createSettingsPanel } from '../ui/SettingsPanel';
 import { h } from '../ui/dom';
 
@@ -233,23 +234,7 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
     if (result.success && carry) Object.assign(this.mission.carry, carry, { t: this.t });
     this.telemetry.sample(this.t, this.telemetrySample(), 1, true);
     this.callouts.say(this.t, 'FLIGHT', result.success ? 'Phase complete. Good work, everyone.' : 'We have a failure. Lock your consoles, record your data.', result.success ? 'good' : 'bad');
-    const actions: ResultAction[] = [];
-    const next = this.mission.nextPhase();
-    if (result.success && this.mission.mode === 'campaign' && next) {
-      actions.push({
-        id: 'continue',
-        label: `Continue: ${PHASES[next].title}`,
-        primary: true,
-        onClick: () => {
-          this.mission.advance();
-          const s = createPhaseScreen(this.mission);
-          if (s) this.app.go(s);
-          else this.app.go('menu');
-        },
-      });
-    }
-    actions.push({ id: 'retry', label: 'Retry phase', primary: !result.success, onClick: () => this.restartPhase() });
-    actions.push({ id: 'menu', label: 'Main menu', onClick: () => this.app.go('menu') });
+    const actions = phaseEndActions(this.app, this.mission, result, () => this.restartPhase());
     this.showOverlay(createResultsPanel(result, PHASES[this.mission.phase].title, actions, this.debriefExtras()));
   }
 

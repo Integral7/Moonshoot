@@ -4,7 +4,27 @@ An end-to-end lunar mission game in 3D for the web: design a vehicle, launch it,
 burn for the Moon, land by hand, and bring the crew home through a reentry corridor to splashdown.
 Everything is procedural (no image or model assets), and the physics uses real constants.
 
-> Status: in active development. See [PROGRESS.md](PROGRESS.md) for the milestone log.
+> Status: in active development (milestones 1-4 of 12 complete). See [PROGRESS.md](PROGRESS.md) for the milestone log.
+
+## What works so far
+
+- **Vehicle design** (Campaign, or Free Play → Vehicle Design): build a rocket from capsules, heat shields,
+  parachutes, an escape tower, tanks, engines, decouplers and landing legs. Mass, thrust-to-weight, per-stage
+  delta-v and the full mission delta-v budget update live, with validation and a scored debrief.
+- **Translunar cruise** (Free Play): patched-conic coast to the Moon with time warp up to 100,000x, predicted
+  trajectory with SOI and periapsis markers, mission control callouts and a debrief.
+- **Physics core** (`src/physics`): real constants, Kepler and universal-variable propagation, Lambert solver,
+  patched conics, US Standard Atmosphere 1976, drag/lift/heating, fixed-step RK4, TLI planner, all unit-tested.
+
+## Controls
+
+| Key / input | Action |
+|---|---|
+| Drag / wheel | Rotate / zoom camera |
+| `,` and `.` | Slower / faster time warp (`/` resets to 1x) |
+| `P` | Pause |
+| `Tab` | Cycle camera focus (map views) |
+| `Esc` | Pause menu |
 
 ## Running it locally (Windows)
 

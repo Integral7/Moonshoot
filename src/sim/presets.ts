@@ -6,6 +6,8 @@ import { DEG, MU_EARTH, R_EARTH } from '../physics/constants';
 import { applyBurn, planTli, stateAt } from '../physics/planner';
 import type { OrbitState } from '../physics/patched';
 import { vec } from '../physics/vec';
+import { flyAscent } from './ascent';
+import { DEFAULT_DESIGN, type VehicleState } from './vehicle';
 
 export const PARKING_ALTITUDE = 185e3;
 
@@ -46,4 +48,21 @@ export function cruisePreset(): CruisePreset {
   const orbit = stateAt(postBurn, plan.burnTime + 20 * 60);
   cruiseCache = { orbit, eph, nominalPeriapsis: plan.periapsisAltitude };
   return structuredClone(cruiseCache);
+}
+
+export interface OrbitPreset {
+  orbit: OrbitState;
+  vehicle: VehicleState;
+  eph: Ephemeris;
+}
+
+let orbitCache: OrbitPreset | null = null;
+
+/** Free-play Earth-orbit start: the default vehicle just after an autopilot ascent. */
+export function orbitPreset(): OrbitPreset {
+  if (!orbitCache) {
+    const sim = flyAscent(DEFAULT_DESIGN, STANDARD_EPHEMERIS);
+    orbitCache = { orbit: sim.orbitState(), vehicle: structuredClone(sim.vehicle.state), eph: STANDARD_EPHEMERIS };
+  }
+  return structuredClone(orbitCache);
 }

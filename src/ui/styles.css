@@ -284,3 +284,23 @@ p { margin: 0.4em 0; }
 .gbar { height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
 .gfill { height: 100%; background: var(--accent); }
 .gfill.pitch { background: var(--accent-2); }
+
+/* ---------- Maneuver panel ---------- */
+.maneuver-panel { position: absolute; top: 19.8rem; right: 1rem; width: 23rem; padding: 0.6rem 0.8rem; font-size: 0.8rem; max-height: calc(100% - 23rem); overflow-y: auto; }
+.mnv-planners { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
+.mnv-row { display: flex; align-items: center; gap: 0.25rem; justify-content: space-between; margin: 0.18rem 0; }
+.mnv-shift { justify-content: flex-start; flex-wrap: wrap; }
+.mnv-comp { justify-content: flex-start; }
+.mnv-label { width: 4.3rem; font-size: 0.75rem; }
+.comp-prograde { color: #ffe08a; }
+.comp-normal { color: #d29bff; }
+.comp-radial { color: #7fd8ff; }
+.mnv-input { width: 4.6rem; font: inherit; font-family: var(--mono); font-size: 0.78rem; text-align: right; background: var(--panel-solid); color: var(--text); border: 1px solid var(--panel-border); border-radius: 3px; padding: 0.15rem 0.25rem; }
+.icon-btn.wide { width: auto; padding: 0 0.35rem; }
+.mnv-result { margin: 0.2rem 0; }
+.mnv-actions { margin-top: 0.4rem; flex-wrap: wrap; }
+.att-buttons { display: flex; gap: 2px; padding: 0.3rem; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 6px; }
+.att-buttons .icon-btn { height: 1.8rem; font-size: 0.7rem; }
+.att-buttons .icon-btn.active { border-color: var(--good); color: #c9f5da; }
+.label-node { color: #7dffb2; font-weight: 600; }
+.label-planned { opacity: 0.95; }

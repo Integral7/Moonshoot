@@ -41,8 +41,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ✅ done |
 | 4 | Vehicle design (VAB) | ✅ done (user approved M5–M8) |
 | 5 | Launch | ✅ done |
-| 6 | Earth orbit + TLI maneuver node | ⏳ next |
-| 7 | Cruise (patched conic, MCC, warp) | ☐ |
+| 6 | Earth orbit + TLI maneuver node | ✅ done |
+| 7 | Cruise (patched conic, MCC, warp) | ⏳ next |
 | 8 | LOI + landing | ☐ — **pause after this** |
 | 9 | Return: ascent, TEI, reentry, splashdown | ☐ |
 | 10 | Scoring/failure analysis + replay w/ telemetry graphs | ☐ |
@@ -120,8 +120,21 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
   sky color + skylight by altitude, callouts, scored debrief (Δv, apoapsis, circularization, max-Q, g, piloting).
   Carries `vehicle` + `flight.orbit`. Warp ≤10x (debug `fast` → 100x for e2e).
 
+### M6 — Earth orbit + TLI (done)
+- `src/sim/orbital.ts`: `OrbitalFlight` (exact patched coast, finite RK4 burns, node execution steered in the local
+  orbital frame and centered on the node, exact final-step cutoff, auto-staging, halt at atmosphere/impact),
+  `simulateNode`, `refineNodeFinite` (energy match for gravity loss, then bisection + fine secant on node time
+  against an objective), `lunarApproach` (signed periapsis radius for root finding), `circularizeNode`.
+  Lesson: 1 m/s at TLI ≈ 1000 km at the Moon, so burn cutoff quantization matters.
+- MapView now has `current` + `planned` layers (each with its own ghost Moon) and a node marker.
+- `ManeuverPanel` (time shift, prograde/normal/radial with +/- and typed values, planners, warp-to-node, execute).
+- `OrbitalScreen` base (map, vessel model + plume, attitude buttons, manual throttle, warp limits around
+  node/events/phase end, finite-burn planned preview, burn callouts). `OrbitScreen`: circularize helpers,
+  auto TLI (planTli → refineNodeFinite), completes 60 s after a burn that yields a lunar encounter; scored on
+  lunar periapsis, Δv vs impulsive ideal, flight time. Free-play preset = autopilot ascent (`orbitPreset`).
+
 ## Next steps
-M6 Earth orbit: start from carried orbit (or preset via `flyAscent`-like parking orbit), maneuver node tool
-(place node along orbit, prograde/normal/radial handles + numeric inputs, predicted patched-conic trajectory with
-Moon encounter), burn execution with finite burns (RK4, attitude to node vector), circularize helper, TLI auto-plan
-(`planTli`), callouts, scoring. Then M7 cruise MCC, M8 LOI + landing, then PAUSE.
+M7: rebuild `CruiseScreen` on `OrbitalScreen` with an MCC planner (solve prograde/radial component for 110 km
+ prograde periapsis via `refineNodeFinite`-style bisection), keep end 1 h before periapsis; carry vehicle.
+M8: lunar orbit insertion (circularize at periapsis, retrograde) + DOI + powered descent on procedural terrain,
+then PAUSE.

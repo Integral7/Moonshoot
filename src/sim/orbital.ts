@@ -1,0 +1,421 @@
+// Orbital flight: a vehicle on a patched-conic trajectory that can coast
+// (exact Kepler, any time warp) or burn (fixed-step RK4 with finite thrust).
+// Shared by the Earth-orbit, cruise, lunar-orbit and return phases.
+
+import { BODIES, type Ephemeris } from '../physics/bodies';
+import { G0 } from '../physics/constants';
+import { flightDerivative, STATE_SIZE, type FlightControls } from '../physics/dynamics';
+import { RK4 } from '../physics/integrator';
+import { stateToElements, timeToApoapsis, timeToPeriapsis, type Elements } from '../physics/kepler';
+import { circularizeDeltaV, inertialToNode, localFrame, nodeMagnitude, nodeToInertial, type NodeDeltaV } from '../physics/maneuver';
+import { coast, normalizeFrame, predictTrajectory, type OrbitState, type Prediction, type TrajectoryEvent } from '../physics/patched';
+import { add, len, neg, norm, vec, type Vec3 } from '../physics/vec';
+import { Vehicle, type VehicleState } from './vehicle';
+
+export const BURN_STEP = 0.05;
+
+export type AttitudeMode = 'prograde' | 'retrograde' | 'normal' | 'antinormal' | 'radial' | 'antiradial' | 'node';
+
+export interface ManeuverNode {
+  /** Mission time of the (impulsive) maneuver, s. */
+  t: number;
+  dv: NodeDeltaV;
+}
+
+export interface FlightEvent {
+  t: number;
+  kind: 'burn-start' | 'burn-end' | 'flameout' | 'staging' | 'soi' | 'atmosphere' | 'impact' | 'escape';
+  detail?: string;
+}
+
+export interface OrbitalCarry {
+  orbit: OrbitState;
+  eph: Ephemeris;
+}
+
+/** State propagated (coasting) to time t, across SOI boundaries. */
+export function coastTo(s: OrbitState, t: number, eph: Ephemeris): OrbitState {
+  if (t <= s.t) return s;
+  return coast(s, t - s.t, { eph, stopAtAtmosphere: false }).state;
+}
+
+export class OrbitalFlight {
+  readonly vehicle: Vehicle;
+  s: OrbitState;
+  node: ManeuverNode | null = null;
+  attitude: AttitudeMode = 'prograde';
+  /** Commanded throttle (manual). */
+  throttle = 0;
+  /** Actual throttle last step. */
+  thrustLevel = 0;
+  /** Automatic node execution. */
+  autoBurn: { dv: NodeDeltaV; remaining: number; start: number; started: boolean; initial: number } | null = null;
+  /** Integration step while thrusting, s (larger for fast planning simulations). */
+  burnStep = BURN_STEP;
+  /** Total delta-v expended in this flight, m/s. */
+  dvUsed = 0;
+  events: FlightEvent[] = [];
+  /** Set when the trajectory reaches the atmosphere interface or a surface. */
+  halted: TrajectoryEvent | null = null;
+  autoStage = true;
+  private rk = new RK4(STATE_SIZE);
+  private y = new Float64Array(STATE_SIZE);
+  private burning = false;
+
+  constructor(
+    orbit: OrbitState,
+    vehicle: VehicleState,
+    readonly eph: Ephemeris,
+  ) {
+    this.s = normalizeFrame(orbit, eph);
+    this.vehicle = new Vehicle(vehicle);
+  }
+
+  get t(): number {
+    return this.s.t;
+  }
+
+  get body() {
+    return BODIES[this.s.body];
+  }
+
+  elements(): Elements {
+    return stateToElements(this.s.r, this.s.v, this.body.mu);
+  }
+
+  get altitude(): number {
+    return len(this.s.r) - this.body.radius;
+  }
+
+  /** Unit attitude vector (inertial) for the current mode. */
+  attitudeVector(mode: AttitudeMode = this.attitude): Vec3 {
+    const f = localFrame(this.s.r, this.s.v);
+    switch (mode) {
+      case 'prograde': return f.prograde;
+      case 'retrograde': return neg(f.prograde);
+      case 'normal': return f.normal;
+      case 'antinormal': return neg(f.normal);
+      case 'radial': return f.radial;
+      case 'antiradial': return neg(f.radial);
+      case 'node': {
+        if (this.autoBurn) return norm(nodeToInertial(this.s.r, this.s.v, this.autoBurn.dv));
+        const v = this.nodeVector();
+        return v ? norm(v) : f.prograde;
+      }
+    }
+  }
+
+  /** Node delta-v as an inertial vector at the node time. */
+  nodeVector(): Vec3 | null {
+    if (!this.node) return null;
+    const at = coastTo(this.s, this.node.t, this.eph);
+    return nodeToInertial(at.r, at.v, this.node.dv);
+  }
+
+  /** Estimated full-thrust burn time for the node, s. */
+  nodeBurnTime(): number {
+    if (!this.node) return 0;
+    return this.vehicle.burnTimeFor(nodeMagnitude(this.node.dv));
+  }
+
+  setNode(node: ManeuverNode | null): void {
+    this.node = node;
+    this.autoBurn = null;
+  }
+
+  /** Arm automatic execution of the current node (burn centered on the node time). */
+  executeNode(): boolean {
+    if (!this.node) return false;
+    const mag = nodeMagnitude(this.node.dv);
+    if (mag <= 0) return false;
+    const tb = this.nodeBurnTime();
+    if (!Number.isFinite(tb)) return false;
+    // Steered in the local orbital frame (rotating with the orbit), centered on the node.
+    this.autoBurn = { dv: { ...this.node.dv }, remaining: mag, start: this.node.t - tb / 2, started: false, initial: mag };
+    this.attitude = 'node';
+    return true;
+  }
+
+  /** Time until the next thing that warrants dropping out of time warp, s. */
+  timeToNextEvent(): number {
+    if (this.autoBurn && !this.autoBurn.started) return this.autoBurn.start - this.t;
+    if (this.node && !this.autoBurn) return this.node.t - this.t;
+    return Infinity;
+  }
+
+  get isBurning(): boolean {
+    return this.burning;
+  }
+
+  /** Advance by dt seconds. Coasts exactly unless thrusting, then integrates finite burns. */
+  advance(dt: number): void {
+    let remaining = dt;
+    let guard = 0;
+    while (remaining > 1e-9 && guard++ < 100_000) {
+      if (this.halted) return;
+      const ab = this.autoBurn;
+      if (ab && !ab.started) {
+        const until = ab.start - this.t;
+        if (until > 0) {
+          const step = Math.min(until, remaining);
+          this.coastFor(step);
+          remaining -= step;
+          continue;
+        }
+        ab.started = true;
+        this.events.push({ t: this.t, kind: 'burn-start', detail: `${ab.initial.toFixed(1)} m/s` });
+      }
+      const wantThrust = ab ? ab.started : this.throttle > 0;
+      if (!wantThrust) {
+        this.coastFor(remaining);
+        remaining = 0;
+        break;
+      }
+      const h = Math.min(this.burnStep, remaining);
+      this.integrateBurn(h);
+      remaining -= h;
+    }
+  }
+
+  private coastFor(dt: number): void {
+    if (this.burning) this.burning = false;
+    const res = coast(this.s, dt, { eph: this.eph, stopAtAtmosphere: true });
+    this.s = res.state;
+    for (const ev of res.events) {
+      if (ev.kind === 'soi-enter' || ev.kind === 'soi-exit') this.events.push({ t: ev.t, kind: 'soi', detail: this.s.body });
+    }
+    if (res.halted) {
+      const ev = res.events[res.events.length - 1];
+      this.halted = ev;
+      this.events.push({ t: ev.t, kind: ev.kind === 'atmosphere' ? 'atmosphere' : ev.kind === 'impact' ? 'impact' : 'escape' });
+    }
+  }
+
+  private integrateBurn(h: number): void {
+    const v = this.vehicle;
+    if (!v.engine) {
+      if (this.autoStage && !v.isLastStage && v.stageInfo && v.prop <= 0) {
+        v.separate();
+        this.events.push({ t: this.t, kind: 'staging', detail: `Stage ${v.state.stage}` });
+        if (!v.engine) {
+          this.endBurn('flameout');
+          return;
+        }
+      } else {
+        this.endBurn('flameout');
+        this.coastFor(h);
+        return;
+      }
+    }
+    const e = v.engine!;
+    let throttle = this.throttle;
+    const ab = this.autoBurn;
+    let dir = this.attitudeVector();
+    if (ab) {
+      dir = norm(nodeToInertial(this.s.r, this.s.v, ab.dv));
+      const rem = ab.remaining;
+      const accFull = e.thrustVac / v.mass;
+      // Throttle down for the last second of the burn when possible.
+      throttle = Math.min(1, Math.max(e.minThrottle, rem / Math.max(accFull * 1.0, 1e-6)));
+      if (rem < 1e-3) {
+        this.endBurn('burn-end');
+        this.coastFor(h);
+        return;
+      }
+    }
+    throttle = v.effectiveThrottle(throttle);
+    if (throttle <= 0) {
+      this.coastFor(h);
+      return;
+    }
+    if (!this.burning) this.burning = true;
+    const ctl: FlightControls = {
+      propulsion: { throttle, thrustVac: e.thrustVac, ispVac: e.ispVac, ispSl: e.ispSl, dir },
+      aero: null,
+    };
+    const s = this.s;
+    const m0 = v.mass;
+    this.y.set([s.r.x, s.r.y, s.r.z, s.v.x, s.v.y, s.v.z, m0]);
+    const mdot = (throttle * e.thrustVac) / (e.ispVac * G0);
+    // Don't burn more than is left, and end the final auto-burn step exactly at cutoff
+    // (1 m/s at TLI moves the lunar periapsis by ~1000 km, so step quantization matters).
+    let hh = Math.min(h, v.prop / Math.max(mdot, 1e-9));
+    if (ab) {
+      const acc = (throttle * e.thrustVac) / m0;
+      hh = Math.min(hh, ab.remaining / Math.max(acc, 1e-9));
+    }
+    this.rk.step(flightDerivative(this.body, ctl), s.t, this.y, hh);
+    const burned = m0 - this.y[6];
+    v.consume(burned);
+    const dvStep = e.ispVac * G0 * Math.log(m0 / Math.max(1, m0 - burned));
+    this.dvUsed += dvStep;
+    if (ab) ab.remaining -= dvStep;
+    this.thrustLevel = throttle;
+    this.s = normalizeFrame({ body: s.body, t: s.t + hh, r: vec(this.y[0], this.y[1], this.y[2]), v: vec(this.y[3], this.y[4], this.y[5]) }, this.eph);
+    if (hh < h) this.coastFor(h - hh);
+  }
+
+  private endBurn(kind: 'burn-end' | 'flameout'): void {
+    this.thrustLevel = 0;
+    this.burning = false;
+    if (this.autoBurn) {
+      const rem = this.autoBurn.remaining;
+      this.events.push({ t: this.t, kind, detail: `${rem.toFixed(1)} m/s remaining` });
+      this.autoBurn = null;
+      this.node = null;
+      this.attitude = 'prograde';
+    } else if (kind === 'flameout') {
+      this.events.push({ t: this.t, kind });
+      this.throttle = 0;
+    }
+  }
+
+  stage(): boolean {
+    const ok = this.vehicle.separate();
+    if (ok) this.events.push({ t: this.t, kind: 'staging', detail: `Stage ${this.vehicle.state.stage}` });
+    return ok;
+  }
+
+  // ---- Planning -------------------------------------------------------------
+
+  /** Trajectory prediction from now (no node). */
+  predict(duration: number, maxSegments = 3): Prediction {
+    return predictTrajectory(this.s, duration, { eph: this.eph, maxSegments });
+  }
+
+  /** Prediction after applying the node impulsively, starting at the node time. */
+  predictWithNode(duration: number, maxSegments = 3): Prediction | null {
+    if (!this.node) return null;
+    const at = coastTo(this.s, this.node.t, this.eph);
+    const after: OrbitState = { ...at, v: add(at.v, nodeToInertial(at.r, at.v, this.node.dv)) };
+    return predictTrajectory(after, duration, { eph: this.eph, maxSegments });
+  }
+
+  /** Node that circularizes at the next apoapsis (or periapsis). */
+  circularizeNode(at: 'apoapsis' | 'periapsis' = 'apoapsis'): ManeuverNode | null {
+    const el = this.elements();
+    const mu = this.body.mu;
+    const dt = at === 'apoapsis' ? timeToApoapsis(el, mu) : timeToPeriapsis(el, mu);
+    if (!Number.isFinite(dt) || dt < 0) return null;
+    const tn = this.t + Math.max(dt, 1);
+    const st = coastTo(this.s, tn, this.eph);
+    const dv = circularizeDeltaV(mu, st.r, st.v);
+    return { t: tn, dv: inertialToNode(st.r, st.v, dv) };
+  }
+}
+
+/** Lunar approach summary of a prediction, or null if it never enters the Moon SOI. */
+export function lunarApproach(p: Prediction): { periapsis: number; signedRadius: number; time: number; impact: boolean } | null {
+  const seg = p.segments.find((s) => s.body === 'moon');
+  if (!seg) return null;
+  const imp = p.events.find((e) => e.kind === 'impact' && e.body === 'moon');
+  const pe = p.events.find((e) => e.kind === 'periapsis' && e.body === 'moon');
+  const R = BODIES.moon.radius;
+  return {
+    periapsis: seg.elements.rp - R,
+    // Signed periapsis radius (prograde +): continuous through a head-on impact, for root finding.
+    signedRadius: seg.elements.rp * (seg.elements.hVec.z >= 0 ? 1 : -1),
+    time: pe?.t ?? imp?.t ?? seg.t0,
+    impact: !!imp,
+  };
+}
+
+/** Deep copy of a flight for planning simulations (no shared mutable state). */
+export function cloneFlight(f: OrbitalFlight): OrbitalFlight {
+  const c = new OrbitalFlight(f.s, structuredClone(f.vehicle.state), f.eph);
+  c.node = f.node ? { t: f.node.t, dv: { ...f.node.dv } } : null;
+  return c;
+}
+
+/** Simulate executing `node` with finite thrust; returns the flight just after cutoff. */
+export function simulateNode(f: OrbitalFlight, node: ManeuverNode, step = 0.5): OrbitalFlight | null {
+  const c = cloneFlight(f);
+  c.burnStep = step;
+  c.setNode(node);
+  if (!c.executeNode()) return null;
+  const tb = c.nodeBurnTime();
+  c.advance(Math.max(0, node.t - c.t) + tb * 0.75 + 5);
+  let guard = 0;
+  while (c.autoBurn && guard++ < 200) c.advance(10);
+  return c.halted ? null : c;
+}
+
+/**
+ * Adjust an impulsive node so that its finite-thrust execution reproduces the
+ * impulsive result: first match orbital energy (gravity-loss compensation),
+ * then (optionally) re-solve the node time against an objective with bisection.
+ */
+export function refineNodeFinite(
+  f: OrbitalFlight,
+  node: ManeuverNode,
+  objective?: (after: OrbitalFlight) => number,
+  window = 240,
+): ManeuverNode {
+  const mu = BODIES[f.s.body].mu;
+  const energyOf = (s: OrbitState) => (s.v.x ** 2 + s.v.y ** 2 + s.v.z ** 2) / 2 - mu / len(s.r);
+  // Impulsive reference energy.
+  const at = coastTo(f.s, node.t, f.eph);
+  const impulsive: OrbitState = { ...at, v: add(at.v, nodeToInertial(at.r, at.v, node.dv)) };
+  const eRef = energyOf(impulsive);
+  let n: ManeuverNode = { t: node.t, dv: { ...node.dv } };
+  for (let k = 0; k < 4; k++) {
+    const after = simulateNode(f, n);
+    if (!after || after.s.body !== f.s.body) break;
+    const dE = eRef - energyOf(after.s);
+    const corr = dE / len(after.s.v);
+    if (Math.abs(corr) < 0.05) break;
+    const mag = nodeMagnitude(n.dv);
+    const k2 = (mag + corr) / mag;
+    n = { t: n.t, dv: { prograde: n.dv.prograde * k2, normal: n.dv.normal * k2, radial: n.dv.radial * k2 } };
+  }
+  if (!objective) return n;
+  const evalAt = (t: number) => {
+    const after = simulateNode(f, { t, dv: n.dv });
+    return after ? objective(after) : NaN;
+  };
+  // Search outward from the nominal time, alternating sides, for a sign change.
+  const samples = 24;
+  let bracket: [number, number] | null = null;
+  const f0 = evalAt(n.t);
+  if (Number.isFinite(f0) && Math.abs(f0) < 1) return n;
+  for (let i = 1; i <= samples && !bracket && Number.isFinite(f0); i++) {
+    const dt = (window * i) / samples;
+    const fp = evalAt(n.t + dt);
+    if (Number.isFinite(fp) && Math.sign(fp) !== Math.sign(f0)) bracket = [n.t, n.t + dt];
+    else {
+      const fm = evalAt(n.t - dt);
+      if (Number.isFinite(fm) && Math.sign(fm) !== Math.sign(f0)) bracket = [n.t - dt, n.t];
+    }
+  }
+  if (!bracket) return n;
+  let [lo, hi] = bracket;
+  let fLo = evalAt(lo);
+  for (let k = 0; k < 24 && hi - lo > 0.05; k++) {
+    const mid = 0.5 * (lo + hi);
+    const fm = evalAt(mid);
+    if (!Number.isFinite(fm)) break;
+    if (Math.sign(fm) === Math.sign(fLo)) {
+      lo = mid;
+      fLo = fm;
+    } else hi = mid;
+  }
+  // Final secant polish at the flight integration step (the coarse search used 0.5 s steps).
+  const fine = (t: number) => {
+    const after = simulateNode(f, { t, dv: n.dv }, BURN_STEP);
+    return after ? objective(after) : NaN;
+  };
+  let t0 = 0.5 * (lo + hi) - 0.3;
+  let t1 = 0.5 * (lo + hi) + 0.3;
+  let g0 = fine(t0);
+  let g1 = fine(t1);
+  for (let k = 0; k < 4 && Number.isFinite(g0) && Number.isFinite(g1) && g1 !== g0; k++) {
+    const t2 = t1 - (g1 * (t1 - t0)) / (g1 - g0);
+    if (!Number.isFinite(t2) || Math.abs(t2 - t1) > window) break;
+    t0 = t1;
+    g0 = g1;
+    t1 = t2;
+    g1 = fine(t1);
+    if (Math.abs(g1) < 2_000) break;
+  }
+  return { t: Number.isFinite(g1) ? t1 : 0.5 * (lo + hi), dv: n.dv };
+}

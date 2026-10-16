@@ -12,8 +12,12 @@ import { PostFX } from './PostFX';
 import { World } from './World';
 
 export type FocusId = 'vessel' | 'earth' | 'moon';
+export type LayerId = 'current' | 'planned';
 
-const SEGMENT_COLORS: Record<BodyId, number> = { earth: 0x5cc8ff, moon: 0xffb547 };
+const LAYER_STYLE: Record<LayerId, { colors: Record<BodyId, number>; opacity: number }> = {
+  current: { colors: { earth: 0x5cc8ff, moon: 0xffb547 }, opacity: 0.9 },
+  planned: { colors: { earth: 0xf2f6ff, moon: 0x7dffb2 }, opacity: 0.95 },
+};
 
 interface EventMarker {
   mesh: THREE.Mesh;
@@ -21,10 +25,29 @@ interface EventMarker {
   text: string;
 }
 
+interface Layer {
+  lines: THREE.Line[];
+  markers: EventMarker[];
+  /** Moon-relative legs are drawn around the Moon's position at SOI entry (a "ghost" Moon). */
+  ghost: THREE.Group;
+  ghostTime: number;
+}
+
+const EVENT_TEXT = (ev: TrajectoryEvent): string => {
+  switch (ev.kind) {
+    case 'periapsis': return `Pe ${formatDistance(ev.altitude)}`;
+    case 'impact': return 'IMPACT';
+    case 'atmosphere': return 'Entry interface';
+    case 'soi-enter': return 'Moon SOI';
+    case 'soi-exit': return 'SOI exit';
+    case 'escape': return 'Escape';
+  }
+};
+
 /**
- * Map/orbit view: the celestial World, a vessel marker, the predicted
- * patched-conic trajectory, event markers, and an orbit camera with focus
- * switching. Used by the Earth-orbit, cruise, and return phases.
+ * Map/orbit view: the celestial World, a vessel marker, current and planned
+ * patched-conic trajectories with event markers, an optional maneuver node
+ * marker, and an orbit camera with focus switching.
  */
 export class MapView {
   readonly world: World;
@@ -36,24 +59,24 @@ export class MapView {
   vesselEci: Vec3 = vec();
   /** The body whose frame the vessel is currently in. */
   vesselBody: BodyId = 'earth';
-  /** Extra objects attached to the vessel marker (e.g. maneuver node gizmo). */
+  /** Extra objects attached to the vessel marker. */
   readonly vesselAnchor = new THREE.Group();
-
-  private marker: THREE.Mesh;
-  private lines: THREE.Line[] = [];
-  private ghostAnchor = new THREE.Group();
-  private ghostMoon: THREE.Mesh;
-  private ghostTime = NaN;
-  private moonOrbit: THREE.LineLoop;
-  private eventMarkers: EventMarker[] = [];
-  private markerGeo = new THREE.SphereGeometry(1, 12, 8);
-  private t = 0;
-  private vesselModel: THREE.Object3D | null = null;
-  private predictionVisible = true;
   /** Optional camera override applied after the orbit camera (e.g. a fixed pad camera). */
   cameraOverride: ((camera: THREE.PerspectiveCamera, origin: Vec3) => void) | null = null;
   /** Hide the vessel marker when the camera is closer than this to the vessel, m. */
   markerHideDistance = 20_000;
+
+  private marker: THREE.Mesh;
+  private moonOrbit: THREE.LineLoop;
+  private markerGeo = new THREE.SphereGeometry(1, 12, 8);
+  private ghostGeo = new THREE.SphereGeometry(R_MOON, 32, 16);
+  private ghostMat = new THREE.MeshBasicMaterial({ color: 0xffb547, wireframe: true, transparent: true, opacity: 0.12 });
+  private layers: Record<LayerId, Layer>;
+  private nodeMarker: THREE.Mesh;
+  private nodeText = '';
+  private t = 0;
+  private vesselModel: THREE.Object3D | null = null;
+  private predictionVisible = true;
 
   constructor(
     private app: App,
@@ -66,20 +89,21 @@ export class MapView {
     this.labels = new Labels(ui);
     const scene = this.world.scene;
 
-    this.marker = new THREE.Mesh(
-      new THREE.OctahedronGeometry(1, 0),
-      new THREE.MeshBasicMaterial({ color: 0xffd27a }),
-    );
+    this.marker = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: 0xffd27a }));
     this.marker.name = 'vessel-marker';
     scene.add(this.marker, this.vesselAnchor);
 
-    this.ghostMoon = new THREE.Mesh(
-      new THREE.SphereGeometry(R_MOON, 32, 16),
-      new THREE.MeshBasicMaterial({ color: 0xffb547, wireframe: true, transparent: true, opacity: 0.12 }),
-    );
-    this.ghostAnchor.add(this.ghostMoon);
-    this.ghostAnchor.visible = false;
-    scene.add(this.ghostAnchor);
+    const mkLayer = (): Layer => {
+      const ghost = new THREE.Group();
+      ghost.add(new THREE.Mesh(this.ghostGeo, this.ghostMat));
+      ghost.visible = false;
+      scene.add(ghost);
+      return { lines: [], markers: [], ghost, ghostTime: NaN };
+    };
+    this.layers = { current: mkLayer(), planned: mkLayer() };
+
+    this.nodeMarker = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: 0x7dffb2, wireframe: true }));
+    this.nodeMarker.visible = false;
 
     const pts: THREE.Vector3[] = [];
     for (let k = 0; k < 256; k++) {
@@ -100,12 +124,15 @@ export class MapView {
     if (obj) this.world.scene.add(obj);
   }
 
-  /** Show or hide the predicted trajectory and its event markers. */
+  /** Show or hide all trajectory layers and their markers. */
   showPrediction(v: boolean): void {
     this.predictionVisible = v;
-    for (const l of this.lines) l.visible = v;
-    for (const m of this.eventMarkers) m.mesh.visible = v;
-    this.ghostAnchor.visible = v && Number.isFinite(this.ghostTime);
+    for (const layer of Object.values(this.layers)) {
+      for (const l of layer.lines) l.visible = v;
+      for (const m of layer.markers) m.mesh.visible = v;
+      layer.ghost.visible = v && Number.isFinite(layer.ghostTime);
+    }
+    this.nodeMarker.visible = v && !!this.nodeText;
   }
 
   get camera(): THREE.PerspectiveCamera {
@@ -124,80 +151,89 @@ export class MapView {
     return this.focus;
   }
 
-  /** Replace the drawn trajectory with a new prediction. */
+  /** Current (no-maneuver) trajectory. */
   setPrediction(pred: Prediction | null): void {
-    for (const l of this.lines) {
+    this.setLayer('current', pred);
+  }
+
+  /** Trajectory after the planned maneuver (null to clear). Dims the current trajectory while shown. */
+  setPlannedPrediction(pred: Prediction | null): void {
+    this.setLayer('planned', pred);
+    const dim = pred ? 0.35 : LAYER_STYLE.current.opacity;
+    for (const l of this.layers.current.lines) (l.material as THREE.LineBasicMaterial).opacity = dim;
+  }
+
+  /** Mark a maneuver node at a body-relative position (null to clear). */
+  setNode(r: Vec3 | null, body: BodyId = 'earth', text = ''): void {
+    this.nodeMarker.parent?.remove(this.nodeMarker);
+    this.labels.remove('node');
+    this.nodeText = r ? text : '';
+    if (!r) {
+      this.nodeMarker.visible = false;
+      return;
+    }
+    this.nodeMarker.position.set(r.x, r.z, -r.y);
+    (body === 'earth' ? this.world.earthAnchor : this.world.moonAnchor).add(this.nodeMarker);
+    this.nodeMarker.visible = this.predictionVisible;
+    this.labels.set('node', text, 'label-node');
+  }
+
+  private clearLayer(layer: Layer): void {
+    for (const l of layer.lines) {
       l.parent?.remove(l);
       l.geometry.dispose();
       (l.material as THREE.Material).dispose();
     }
-    this.lines = [];
-    for (const m of this.eventMarkers) {
+    layer.lines = [];
+    for (const m of layer.markers) {
       m.mesh.parent?.remove(m.mesh);
       (m.mesh.material as THREE.Material).dispose();
       this.labels.remove(m.id);
     }
-    this.eventMarkers = [];
-    if (!pred) {
-      this.ghostAnchor.visible = false;
-      return;
-    }
-    // When approaching from Earth's frame, draw Moon-relative legs around the
-    // Moon's position at SOI entry (a "ghost" Moon) so the path is continuous.
-    const enter = pred.events.find((e) => e.kind === 'soi-enter');
-    this.ghostTime = this.vesselBody === 'earth' && enter ? enter.t : NaN;
-    this.ghostAnchor.visible = this.predictionVisible && Number.isFinite(this.ghostTime);
+    layer.markers = [];
+    layer.ghostTime = NaN;
+    layer.ghost.visible = false;
+  }
 
+  private setLayer(id: LayerId, pred: Prediction | null): void {
+    const layer = this.layers[id];
+    this.clearLayer(layer);
+    if (!pred || !pred.segments.length) return;
+    const startBody = pred.segments[0].body;
+    const enter = pred.events.find((e) => e.kind === 'soi-enter');
+    layer.ghostTime = startBody === 'earth' && enter ? enter.t : NaN;
+    layer.ghost.visible = this.predictionVisible && Number.isFinite(layer.ghostTime);
+    const style = LAYER_STYLE[id];
     const maxPts = this.app.quality.trailPoints;
     for (const seg of pred.segments) {
       if (seg.points.length < 2) continue;
       const stride = Math.max(1, Math.ceil(seg.points.length / maxPts));
       const pts = stride > 1 ? seg.points.filter((_, i) => i % stride === 0 || i === seg.points.length - 1) : seg.points;
-      const arr = eciPointsToScene(pts, vec());
       const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
-      const line = new THREE.Line(
-        geo,
-        new THREE.LineBasicMaterial({ color: SEGMENT_COLORS[seg.body], transparent: true, opacity: 0.9 }),
-      );
+      geo.setAttribute('position', new THREE.BufferAttribute(eciPointsToScene(pts, vec()), 3));
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: style.colors[seg.body], transparent: true, opacity: style.opacity }));
       line.frustumCulled = false;
       line.visible = this.predictionVisible;
-      this.anchorFor(seg.body).add(line);
-      this.lines.push(line);
+      this.anchorFor(layer, seg.body).add(line);
+      layer.lines.push(line);
     }
-    pred.events.forEach((ev, i) => this.addEventMarker(ev, i));
+    pred.events.forEach((ev, i) => {
+      const color = ev.kind === 'impact' ? 0xff5d5d : ev.kind === 'periapsis' ? 0x5ee08f : ev.kind === 'atmosphere' ? 0xff9a3d : 0xcfd8e3;
+      const mesh = new THREE.Mesh(this.markerGeo, new THREE.MeshBasicMaterial({ color }));
+      const p = ev.state.r;
+      mesh.position.set(p.x, p.z, -p.y);
+      mesh.visible = this.predictionVisible;
+      this.anchorFor(layer, ev.body).add(mesh);
+      const mid = `${id}-ev-${i}`;
+      const text = (id === 'planned' ? '› ' : '') + EVENT_TEXT(ev);
+      this.labels.set(mid, text, `label-event label-${ev.kind} label-${id}`);
+      layer.markers.push({ mesh, id: mid, text });
+    });
   }
 
-  private anchorFor(body: BodyId): THREE.Object3D {
+  private anchorFor(layer: Layer, body: BodyId): THREE.Object3D {
     if (body === 'earth') return this.world.earthAnchor;
-    return Number.isFinite(this.ghostTime) ? this.ghostAnchor : this.world.moonAnchor;
-  }
-
-  private addEventMarker(ev: TrajectoryEvent, i: number): void {
-    const color = ev.kind === 'impact' ? 0xff5d5d : ev.kind === 'periapsis' ? 0x5ee08f : ev.kind === 'atmosphere' ? 0xff9a3d : 0xcfd8e3;
-    const mesh = new THREE.Mesh(this.markerGeo, new THREE.MeshBasicMaterial({ color }));
-    const p = ev.state.r;
-    mesh.position.set(p.x, p.z, -p.y);
-    mesh.userData.kind = ev.kind;
-    mesh.visible = this.predictionVisible;
-    this.anchorFor(ev.body).add(mesh);
-    const id = `ev-${i}`;
-    const text =
-      ev.kind === 'periapsis'
-        ? `Pe ${formatDistance(ev.altitude)}`
-        : ev.kind === 'impact'
-          ? 'IMPACT'
-          : ev.kind === 'atmosphere'
-            ? 'Entry interface'
-            : ev.kind === 'soi-enter'
-              ? 'Moon SOI'
-              : ev.kind === 'soi-exit'
-                ? 'SOI exit'
-                : ev.kind === 'escape'
-                  ? 'Escape'
-                  : ev.kind;
-    this.labels.set(id, text, `label-event label-${ev.kind}`);
-    this.eventMarkers.push({ mesh, id, text });
+    return Number.isFinite(layer.ghostTime) ? layer.ghost : this.world.moonAnchor;
   }
 
   /** Current floating origin (ECI). */
@@ -215,8 +251,8 @@ export class MapView {
     const camera = this.cam.camera;
     if (this.cameraOverride) this.cameraOverride(camera, origin);
     this.world.update(t, origin, camera, dt);
-    if (Number.isFinite(this.ghostTime)) {
-      eciToScene(moonPosition(this.ghostTime, this.world.eph), origin, this.ghostAnchor.position);
+    for (const layer of Object.values(this.layers)) {
+      if (Number.isFinite(layer.ghostTime)) eciToScene(moonPosition(layer.ghostTime, this.world.eph), origin, layer.ghost.position);
     }
     eciToScene(this.vesselEci, origin, this.marker.position);
     this.vesselAnchor.position.copy(this.marker.position);
@@ -231,20 +267,25 @@ export class MapView {
       obj.scale.setScalar(Math.max(s, 1e-3));
     };
     pxScale(this.marker, 7);
-    for (const m of this.eventMarkers) pxScale(m.mesh, 4);
+    for (const layer of Object.values(this.layers)) for (const m of layer.markers) pxScale(m.mesh, 4);
+    if (this.nodeMarker.parent) pxScale(this.nodeMarker, 8);
 
     // Labels.
-    const w = this.app.width;
-    const hgt = this.app.height;
     this.labels.set('earth', 'Earth', 'label-body').copy(this.world.earth.group.position);
     this.labels.set('moon', 'Moon', 'label-body').copy(this.world.moon.group.position);
     this.labels.set('vessel', 'Spacecraft', 'label-vessel').copy(this.marker.position);
-    for (const m of this.eventMarkers) {
-      this.labels.set(m.id, m.text).copy(m.mesh.getWorldPosition(tmpV));
-      this.labels.show(m.id, this.predictionVisible);
+    for (const layer of Object.values(this.layers)) {
+      for (const m of layer.markers) {
+        this.labels.set(m.id, m.text).copy(m.mesh.getWorldPosition(tmpV));
+        this.labels.show(m.id, this.predictionVisible);
+      }
+    }
+    if (this.nodeText) {
+      this.labels.set('node', this.nodeText, 'label-node').copy(this.nodeMarker.getWorldPosition(tmpV));
+      this.labels.show('node', this.predictionVisible);
     }
     this.labels.show('vessel', this.marker.visible && (this.focus !== 'vessel' || this.cam.distance > 2e5));
-    this.labels.update(camera, w, hgt);
+    this.labels.update(camera, this.app.width, this.app.height);
   }
 
   render(renderer: THREE.WebGLRenderer): void {
@@ -258,9 +299,12 @@ export class MapView {
 
   dispose(): void {
     this.cam.detach();
-    this.setPrediction(null);
+    this.clearLayer(this.layers.current);
+    this.clearLayer(this.layers.planned);
     this.fx.dispose();
     this.markerGeo.dispose();
+    this.ghostGeo.dispose();
+    this.ghostMat.dispose();
     this.world.dispose();
     this.labels.root.remove();
   }

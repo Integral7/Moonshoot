@@ -4,6 +4,7 @@ import { registerPhase } from './app/phases';
 import { CruiseScreen } from './screens/CruiseScreen';
 import { DesignScreen } from './screens/DesignScreen';
 import { FreePlayScreen } from './screens/FreePlayScreen';
+import { LaunchScreen } from './screens/LaunchScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 
 declare global {
@@ -28,6 +29,7 @@ const app = new App(root);
 app.registerScreen('menu', () => new MainMenuScreen());
 app.registerScreen('freeplay', () => new FreePlayScreen());
 registerPhase('design', (m) => new DesignScreen(m));
+registerPhase('launch', (m) => new LaunchScreen(m));
 registerPhase('cruise', (m) => new CruiseScreen(m));
 app.go('menu');
 app.start();

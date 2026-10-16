@@ -35,6 +35,7 @@ const vertexShader = /* glsl */ `
 `;
 
 const fragmentShader = /* glsl */ `
+  uniform float uBrightness;
   varying vec3 vColor;
   varying float vTwinkle;
   void main() {
@@ -43,7 +44,7 @@ const fragmentShader = /* glsl */ `
     if (r2 > 1.0) discard;
     float core = exp(-r2 * 6.0);
     float halo = exp(-r2 * 2.0) * 0.35;
-    gl_FragColor = vec4(vColor * (core + halo) * vTwinkle, 1.0);
+    gl_FragColor = vec4(vColor * (core + halo) * vTwinkle * uBrightness, 1.0);
   }
 `;
 
@@ -95,6 +96,7 @@ export function createStarfield(count: number, radius = 1e5, seed = 1969): THREE
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 },
+      uBrightness: { value: 1 },
       uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 2) },
     },
   });
@@ -132,4 +134,10 @@ function disposeMaterial(m: THREE.Material): void {
   const u = (m as THREE.ShaderMaterial).uniforms;
   if (u) for (const k of Object.keys(u)) if (u[k].value instanceof THREE.Texture && !u[k].value.userData.shared) u[k].value.dispose();
   m.dispose();
+}
+
+/** Dim the stars (e.g. in a daylit sky). */
+export function setStarBrightness(stars: THREE.Points, b: number): void {
+  (stars.material as THREE.ShaderMaterial).uniforms.uBrightness.value = b;
+  stars.visible = b > 0.01;
 }

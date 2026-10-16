@@ -39,9 +39,9 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 1 | Scaffold, tooling, quality framework, headless harness | ✅ done |
 | 2 | Physics core + unit tests | ✅ done |
 | 3 | Game shell, mission control HUD, procedural Earth/Moon/stars | ✅ done |
-| 4 | Vehicle design (VAB) | ✅ done — **paused for user go-ahead** |
-| 5 | Launch | ⏳ next (after go-ahead) |
-| 6 | Earth orbit + TLI maneuver node | ☐ |
+| 4 | Vehicle design (VAB) | ✅ done (user approved M5–M8) |
+| 5 | Launch | ✅ done |
+| 6 | Earth orbit + TLI maneuver node | ⏳ next |
 | 7 | Cruise (patched conic, MCC, warp) | ☐ |
 | 8 | LOI + landing | ☐ — **pause after this** |
 | 9 | Return: ascent, TEI, reentry, splashdown | ☐ |
@@ -105,9 +105,23 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
   → carry.design. `src/app/flow.ts` shared continue/retry/menu actions (continue disabled for unbuilt phases).
 - Campaign button now starts at Vehicle Design.
 
-## Next steps (M5, after user go-ahead)
-Launch phase: vehicle on equatorial pad (lat 0, lon 0 at t = 0 → matches parking orbit plane), RK4 flight with
-`flightDerivative` (drag vs rotating air, pressure-dependent thrust), pitch program/gravity turn controls
-(manual pitch + throttle, optional autopilot for e2e), max-Q callout, staging (Space), LES jettison, plumes and
-trails, sky color by altitude, telemetry graph, scoring (orbit accuracy, Δv used, max-Q, max g). Carry `vehicle`
-state + `flight.orbit` to Earth Orbit phase. Mission time: launch at t = 0 with `STANDARD_EPHEMERIS`.
+### M5 — Launch (done)
+- `src/sim/ascent.ts`: `AscentSim` (pad hold co-rotating, ignition T-3, liftoff when thrust > weight, RK4 at 0.02 s,
+  rate-limited pitch, staging + LES jettison, events, max-Q, q·α breakup at 200 kPa·deg, 9 g crew limit, crash);
+  `ascentAutopilot`: vertical rise → kick (`kickForTwr`) → zero-AoA gravity turn through stage 1 → linear-tangent
+  closed loop on upper stages (Newton on (A,B) against a planar multi-stage prediction; AoA guard). Nova uses
+  9.14 km/s, Methalox 9.69 km/s (budget leg raised to 9.4 km/s). `Vehicle.burnTimeFor`.
+- Render: `plume.ts` (additive cone, shock diamonds at sea level, widens in vacuum, color by propellant),
+  `smoke.ts` (double-precision particles re-based each frame), `launchSite.ts` (curved ground cap built relative to
+  the pad, coastline texture, pad, lattice tower, swing arms), starfield brightness, earth `setAtmosphereIntensity`.
+- MapView: `setVesselModel`, `cameraOverride`, `showPrediction`, `markerHideDistance`.
+- `LaunchScreen`: hold at T-10 → countdown, manual (W/S pitch, Shift/Ctrl/Z/X throttle, Space stage, T prograde
+  assist) or autopilot (G), cameras chase/pad/map (C, M), debris for spent stages + LES, trail in Earth-fixed frame,
+  sky color + skylight by altitude, callouts, scored debrief (Δv, apoapsis, circularization, max-Q, g, piloting).
+  Carries `vehicle` + `flight.orbit`. Warp ≤10x (debug `fast` → 100x for e2e).
+
+## Next steps
+M6 Earth orbit: start from carried orbit (or preset via `flyAscent`-like parking orbit), maneuver node tool
+(place node along orbit, prograde/normal/radial handles + numeric inputs, predicted patched-conic trajectory with
+Moon encounter), burn execution with finite burns (RK4, attitude to node vector), circularize helper, TLI auto-plan
+(`planTli`), callouts, scoring. Then M7 cruise MCC, M8 LOI + landing, then PAUSE.

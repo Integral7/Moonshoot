@@ -48,6 +48,12 @@ export class MapView {
   private eventMarkers: EventMarker[] = [];
   private markerGeo = new THREE.SphereGeometry(1, 12, 8);
   private t = 0;
+  private vesselModel: THREE.Object3D | null = null;
+  private predictionVisible = true;
+  /** Optional camera override applied after the orbit camera (e.g. a fixed pad camera). */
+  cameraOverride: ((camera: THREE.PerspectiveCamera, origin: Vec3) => void) | null = null;
+  /** Hide the vessel marker when the camera is closer than this to the vessel, m. */
+  markerHideDistance = 20_000;
 
   constructor(
     private app: App,
@@ -85,6 +91,21 @@ export class MapView {
       new THREE.LineBasicMaterial({ color: 0x8899aa, transparent: true, opacity: 0.18 }),
     );
     this.world.earthAnchor.add(this.moonOrbit);
+  }
+
+  /** Attach a detailed vessel model (positioned at the vessel each frame; caller sets orientation). */
+  setVesselModel(obj: THREE.Object3D | null): void {
+    if (this.vesselModel) this.world.scene.remove(this.vesselModel);
+    this.vesselModel = obj;
+    if (obj) this.world.scene.add(obj);
+  }
+
+  /** Show or hide the predicted trajectory and its event markers. */
+  showPrediction(v: boolean): void {
+    this.predictionVisible = v;
+    for (const l of this.lines) l.visible = v;
+    for (const m of this.eventMarkers) m.mesh.visible = v;
+    this.ghostAnchor.visible = v && Number.isFinite(this.ghostTime);
   }
 
   get camera(): THREE.PerspectiveCamera {
@@ -125,7 +146,7 @@ export class MapView {
     // Moon's position at SOI entry (a "ghost" Moon) so the path is continuous.
     const enter = pred.events.find((e) => e.kind === 'soi-enter');
     this.ghostTime = this.vesselBody === 'earth' && enter ? enter.t : NaN;
-    this.ghostAnchor.visible = Number.isFinite(this.ghostTime);
+    this.ghostAnchor.visible = this.predictionVisible && Number.isFinite(this.ghostTime);
 
     const maxPts = this.app.quality.trailPoints;
     for (const seg of pred.segments) {
@@ -140,6 +161,7 @@ export class MapView {
         new THREE.LineBasicMaterial({ color: SEGMENT_COLORS[seg.body], transparent: true, opacity: 0.9 }),
       );
       line.frustumCulled = false;
+      line.visible = this.predictionVisible;
       this.anchorFor(seg.body).add(line);
       this.lines.push(line);
     }
@@ -157,6 +179,7 @@ export class MapView {
     const p = ev.state.r;
     mesh.position.set(p.x, p.z, -p.y);
     mesh.userData.kind = ev.kind;
+    mesh.visible = this.predictionVisible;
     this.anchorFor(ev.body).add(mesh);
     const id = `ev-${i}`;
     const text =
@@ -190,12 +213,15 @@ export class MapView {
     this.cam.update(dt);
     const origin = this.origin();
     const camera = this.cam.camera;
+    if (this.cameraOverride) this.cameraOverride(camera, origin);
     this.world.update(t, origin, camera, dt);
     if (Number.isFinite(this.ghostTime)) {
       eciToScene(moonPosition(this.ghostTime, this.world.eph), origin, this.ghostAnchor.position);
     }
     eciToScene(this.vesselEci, origin, this.marker.position);
     this.vesselAnchor.position.copy(this.marker.position);
+    if (this.vesselModel) this.vesselModel.position.copy(this.marker.position);
+    this.marker.visible = !this.vesselModel || this.marker.position.distanceTo(camera.position) > this.markerHideDistance;
 
     // Keep markers a constant apparent size.
     const pxScale = (obj: THREE.Object3D, px: number) => {
@@ -213,8 +239,11 @@ export class MapView {
     this.labels.set('earth', 'Earth', 'label-body').copy(this.world.earth.group.position);
     this.labels.set('moon', 'Moon', 'label-body').copy(this.world.moon.group.position);
     this.labels.set('vessel', 'Spacecraft', 'label-vessel').copy(this.marker.position);
-    for (const m of this.eventMarkers) this.labels.set(m.id, m.text).copy(m.mesh.getWorldPosition(tmpV));
-    this.labels.show('vessel', this.focus !== 'vessel' || this.cam.distance > 2e5);
+    for (const m of this.eventMarkers) {
+      this.labels.set(m.id, m.text).copy(m.mesh.getWorldPosition(tmpV));
+      this.labels.show(m.id, this.predictionVisible);
+    }
+    this.labels.show('vessel', this.marker.visible && (this.focus !== 'vessel' || this.cam.distance > 2e5));
     this.labels.update(camera, w, hgt);
   }
 

@@ -195,6 +195,8 @@ export interface EarthVisual {
   /** Rotating surface (apply Earth rotation angle to rotation.y). */
   spin: THREE.Group;
   setSunDirection(dir: THREE.Vector3): void;
+  /** Scale the atmosphere glow (dim it when the camera is inside the atmosphere). */
+  setAtmosphereIntensity(x: number): void;
   /** Animate clouds; `rotation` is the Earth rotation angle (rad). */
   update(rotation: number, time: number): void;
   dispose(): void;
@@ -266,6 +268,9 @@ export function createEarth(renderer: THREE.WebGLRenderer, q: QualityPreset, rad
     spin,
     setSunDirection(dir) {
       sunDir.copy(dir).normalize();
+    },
+    setAtmosphereIntensity(x) {
+      atmoMat.uniforms.uIntensity.value = 1.6 * x;
     },
     update(rotation, time) {
       spin.rotation.y = rotation;

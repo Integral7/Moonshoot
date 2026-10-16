@@ -276,3 +276,11 @@ p { margin: 0.4em 0; }
   .design-bottom { width: calc(100vw - 16rem); }
   .design-stats-cols { grid-template-columns: 1fr; }
 }
+
+/* ---------- Flight gauges ---------- */
+.btn.active { border-color: var(--good); color: #c9f5da; background: rgba(94, 224, 143, 0.15); }
+.gauges { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.35rem 0.6rem; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 6px; font-size: 0.75rem; min-width: 15rem; }
+.gauge { display: grid; grid-template-columns: 3.2rem 1fr 6.5rem; gap: 0.4rem; align-items: center; }
+.gbar { height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
+.gfill { height: 100%; background: var(--accent); }
+.gfill.pitch { background: var(--accent-2); }

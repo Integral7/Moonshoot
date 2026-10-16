@@ -195,7 +195,7 @@ export interface MissionLeg {
 
 /** Nominal mission delta-v budget (losses included for launch and landing). */
 export const MISSION_LEGS: MissionLeg[] = [
-  { id: 'ascent', label: 'Launch to parking orbit', dv: 9_100 },
+  { id: 'ascent', label: 'Launch to parking orbit', dv: 9_400 },
   { id: 'tli', label: 'Trans-lunar injection', dv: 3_150 },
   { id: 'mcc', label: 'Mid-course correction', dv: 60 },
   { id: 'loi', label: 'Lunar orbit insertion', dv: 870 },
@@ -424,6 +424,31 @@ export class Vehicle {
       above = m0;
     }
     return dv;
+  }
+
+  /**
+   * Burn time (s, full throttle, vacuum) to deliver `dv` using the current and
+   * following stages in order. Infinity if the vehicle cannot deliver it.
+   */
+  burnTimeFor(dv: number): number {
+    const st = this.analysis.stages;
+    let rem = dv;
+    let t = 0;
+    let above = this.mass;
+    for (let i = this.state.stage; i < st.length && rem > 0; i++) {
+      const s = st[i];
+      const prop = this.state.stages[i].prop;
+      const m0 = i === this.state.stage ? this.mass : above;
+      above = m0 - s.dryMass - prop;
+      if (!s.engine || prop <= 0) continue;
+      const ve = s.engine.ispVac * G0;
+      const mdot = s.engine.thrustVac / ve;
+      const dvStage = ve * Math.log(m0 / (m0 - prop));
+      if (dvStage >= rem) return t + (m0 * (1 - Math.exp(-rem / ve))) / mdot;
+      t += prop / mdot;
+      rem -= dvStage;
+    }
+    return rem > 0 ? Infinity : t;
   }
 
   /** Actual throttle given engine limits (0 = off). */

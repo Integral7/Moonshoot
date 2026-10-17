@@ -36,3 +36,23 @@ export async function boot(page: Page, quality: 'low' | 'medium' | 'high' = 'low
   await page.goto('/');
   await page.waitForFunction(() => !!window.__moonshot);
 }
+
+/** Time-warp as fast as the screen allows until `done(state)` is true. */
+export async function warpUntil(page: Page, done: (s: Record<string, unknown>) => boolean, ms = 150_000, warp?: number): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + ms;
+  let s = await state(page);
+  while (!done(s) && Date.now() < deadline) {
+    await cmd(page, 'warp', warp ?? (s.maxWarp as number) ?? 1);
+    await waitFrames(page, 3);
+    s = await state(page);
+  }
+  return s;
+}
+
+/** Plan with a named planner and execute it, then warp until the burn is done. */
+export async function planAndBurn(page: Page, planner: string): Promise<Record<string, unknown>> {
+  const r = (await cmd(page, 'plan', planner)) as Record<string, unknown>;
+  if (r.error) throw new Error(`planner ${planner}: ${String(r.error)}`);
+  await cmd(page, 'execute');
+  return warpUntil(page, (st) => !st.autoBurn && !st.node);
+}

@@ -46,8 +46,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 8 | LOI + landing | ✅ done (user approved M9–M12) |
 | 9 | Return: ascent, TEI, reentry, splashdown | ✅ done |
 | 10 | Scoring/failure analysis + replay w/ telemetry graphs | ✅ done |
-| 11 | Campaign polish, free-play states, perf | ⏳ next |
-| 12 | Docs + final headless pass | ☐ — **pause after this** |
+| 11 | Campaign polish, free-play states, perf | ✅ done |
+| 12 | Docs + final headless pass | ⏳ next — **pause after this** |
 
 ## Log
 ### M1 — Scaffold (done)
@@ -183,7 +183,15 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - `ReplayScreen` (MapView playback, trails per SOI body, play/pause, speed, scrubber, synced graph) and
   `ReplayListScreen` (main menu → Replays).
 
+### M11 — Campaign polish (done)
+- `Mission.toSave/fromSave` (phase-start snapshot + results), `src/sim/campaignStore.ts` (one guarded slot),
+  `goToPhase` saves campaign progress, main menu "Continue campaign: <phase>" + "New campaign".
+- `MissionSummaryScreen` after a successful return (per-phase scores and ratings, total / 6000, splash site);
+  `phaseEndActions` offers "Mission summary" and clears the save.
+- E2E: `campaign.spec.ts` flies the whole campaign (design → splashdown) on autopilots/planners in ~6 min headless
+  (scored 5,599 / 6,000) and checks save/resume across a reload; `quality.spec.ts` renders the pad and the lunar
+  surface at Low and High. Bundle: ~813 KB JS (Three.js dominates).
+- README rewritten with full controls and "How this was built".
+
 ## Next steps
-M11: campaign save/resume (localStorage) + "Continue campaign", mission summary after a successful return
-(per-phase scores, total), full-chain campaign e2e with autopilots, perf/quality pass (screenshots at low/high).
-M12: README "How this was built", final headless pass, PAUSE with summary + Windows commands.
+M12: final full test pass, PROGRESS wrap-up, push, PAUSE with summary + Windows commands.

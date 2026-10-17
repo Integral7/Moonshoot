@@ -5,7 +5,8 @@ import { createStarfield, disposeObject, updateStarfield } from '../render/starf
 import { createSettingsPanel } from '../ui/SettingsPanel';
 import { h } from '../ui/dom';
 import { goToPhase } from '../app/flow';
-import { Mission } from '../sim/mission';
+import { Mission, PHASES } from '../sim/mission';
+import { clearCampaign, loadCampaign } from '../sim/campaignStore';
 
 export class MainMenuScreen implements Screen {
   readonly id = 'menu';
@@ -56,6 +57,7 @@ export class MainMenuScreen implements Screen {
   }
 
   private buildUi(): void {
+    const saved = loadCampaign();
     const menu = h(
       'div',
       { class: 'menu' },
@@ -64,7 +66,18 @@ export class MainMenuScreen implements Screen {
         h('p', { class: 'subtitle', text: 'A lunar mission from the drawing board to splashdown' }),
       ),
       h('div', { class: 'menu-buttons' },
-        h('button', { class: 'btn btn-primary', id: 'btn-campaign', text: 'Campaign', onclick: () => goToPhase(this.app, new Mission('campaign', 'design')) }),
+        saved
+          ? h('button', { class: 'btn btn-primary', id: 'btn-continue', text: `Continue campaign: ${PHASES[saved.phase].title}`, onclick: () => goToPhase(this.app, saved) })
+          : null,
+        h('button', {
+          class: `btn ${saved ? '' : 'btn-primary'}`,
+          id: 'btn-campaign',
+          text: saved ? 'New campaign' : 'Campaign',
+          onclick: () => {
+            clearCampaign();
+            goToPhase(this.app, new Mission('campaign', 'design'));
+          },
+        }),
         h('button', { class: 'btn', id: 'btn-freeplay', text: 'Free Play', onclick: () => this.app.go('freeplay') }),
         h('button', { class: 'btn', id: 'btn-replays', text: 'Replays', onclick: () => this.app.go('replays') }),
         h('button', { class: 'btn', id: 'btn-settings', text: 'Settings', onclick: () => this.openSettings() }),

@@ -61,6 +61,15 @@ export const PHASES: Record<PhaseId, PhaseInfo> = {
 
 export type MissionMode = 'campaign' | 'freeplay';
 
+export interface MissionSave {
+  version: 1;
+  mode: MissionMode;
+  phase: PhaseId;
+  carry: MissionCarry;
+  results: PhaseResult[];
+  savedAt: string;
+}
+
 /**
  * State carried between phases. Fields are JSON-serializable (no class
  * instances) so the mission can be snapshotted, saved and replayed.
@@ -113,6 +122,17 @@ export class Mission {
   /** Restore the carried state to how it was when the current phase began. */
   retry(): void {
     this.carry = structuredClone(this.startSnapshot);
+  }
+
+  /** Serializable save: the state at the start of the current phase plus results so far. */
+  toSave(): MissionSave {
+    return { version: 1, mode: this.mode, phase: this.phase, carry: structuredClone(this.startSnapshot), results: structuredClone(this.results), savedAt: new Date().toISOString() };
+  }
+
+  static fromSave(s: MissionSave): Mission {
+    const m = new Mission(s.mode, s.phase, structuredClone(s.carry));
+    m.results = structuredClone(s.results);
+    return m;
   }
 
   get totalScore(): number {

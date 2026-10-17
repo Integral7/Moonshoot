@@ -107,3 +107,25 @@ describe('free-play presets', () => {
     expect(Math.abs(pe!.altitude - 900e3)).toBeLessThan(20e3);
   });
 });
+
+describe('campaign save', () => {
+  it('saves the phase-start state and restores it', async () => {
+    const { saveCampaign, loadCampaign, clearCampaign } = await import('../src/sim/campaignStore');
+    const data = new Map<string, string>();
+    const st = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v), removeItem: (k: string) => void data.delete(k) };
+    const m = new Mission('campaign', 'design', { t: 0 });
+    m.carry.design = { name: 'x', parts: ['capsule-3'] };
+    m.complete({ phase: 'design', success: true, score: 900, rating: 'excellent', metrics: [], findings: [], t: 0, summary: '' });
+    m.advance();
+    m.carry.flight = { mid: 'phase' }; // in-progress changes are not saved
+    expect(saveCampaign(m, st)).toBe(true);
+    const back = loadCampaign(st)!;
+    expect(back.phase).toBe('launch');
+    expect(back.carry.design).toEqual({ name: 'x', parts: ['capsule-3'] });
+    expect(back.carry.flight).toBeUndefined();
+    expect(back.results).toHaveLength(1);
+    clearCampaign(st);
+    expect(loadCampaign(st)).toBeNull();
+    expect(saveCampaign(new Mission('freeplay', 'launch'), st)).toBe(false);
+  });
+});

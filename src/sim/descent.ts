@@ -30,7 +30,7 @@ export interface TouchdownReport {
   reasons: string[];
 }
 
-export type DescentEventKind = 'low-fuel' | 'fuel-60' | 'fuel-30' | 'out-of-fuel' | 'dust' | 'contact' | 'touchdown' | 'crash' | 'altitude';
+export type DescentEventKind = 'liftoff' | 'low-fuel' | 'fuel-60' | 'fuel-30' | 'out-of-fuel' | 'dust' | 'contact' | 'touchdown' | 'crash' | 'altitude';
 
 export interface DescentEvent {
   t: number;
@@ -56,13 +56,32 @@ export class DescentSim {
   /** Landing point chosen by hazard avoidance (map coordinates), once low enough. */
   site: { x: number; y: number; slope: number } | null = null;
 
-  constructor(r: Vec3, v: Vec3, vehicle: VehicleState, readonly eph: Ephemeris, t: number, terrainSeed = 1969) {
+  /** Sitting on the surface (pinned, rotating with the Moon) until thrust exceeds weight. */
+  grounded = false;
+  /** Touchdown detection is armed once the vehicle has been airborne above 3 m. */
+  private armed = true;
+
+  constructor(r: Vec3, v: Vec3, vehicle: VehicleState, readonly eph: Ephemeris, t: number, terrainSeed = 1969, onSurface = false) {
     this.vehicle = new Vehicle(vehicle);
     this.t = t;
     this.y.set([r.x, r.y, r.z, v.x, v.y, v.z, this.vehicle.mass]);
     // Terrain map centered on the point below the vehicle at the start of the descent.
     this.terrain = new LunarTerrain(this.toFixed(r), terrainSeed);
     this.dir = norm(scale(v, -1));
+    if (onSurface) {
+      this.grounded = true;
+      this.armed = false;
+      this.dir = norm(r);
+      this.pinToSurface();
+    }
+  }
+
+  /** Hold the vehicle on the terrain surface, co-rotating with the Moon. */
+  private pinToSurface(): void {
+    const u = this.up;
+    const rr = scale(u, R_MOON + this.terrainHeight);
+    const w = MOON.rotationRate;
+    this.y.set([rr.x, rr.y, rr.z, -w * rr.y, w * rr.x, 0, this.vehicle.mass]);
   }
 
   get r(): Vec3 {
@@ -176,6 +195,18 @@ export class DescentSim {
       aero: null,
     };
     const m0 = this.vehicle.mass;
+    if (this.grounded) {
+      const thrustAcc = ctl.propulsion ? (this.throttle * ctl.propulsion.thrustVac * Math.max(0, dot(this.dir, this.up))) / m0 : 0;
+      if (thrustAcc <= this.gravity) {
+        // Still on the surface: burn propellant but stay put.
+        if (ctl.propulsion) this.vehicle.consume(((this.throttle * ctl.propulsion.thrustVac) / (ctl.propulsion.ispVac * G0)) * h);
+        this.pinToSurface();
+        this.t += h;
+        return;
+      }
+      this.grounded = false;
+      this.events.push({ t: this.t, kind: 'liftoff' });
+    }
     this.y[6] = m0;
     this.rk.step(flightDerivative(MOON, ctl), this.t, this.y, h);
     const burned = m0 - this.y[6];
@@ -206,6 +237,11 @@ export class DescentSim {
         this.lastCall = mark;
         this.events.push({ t: this.t, kind: 'altitude', detail: `${mark} m, down at ${Math.max(0, -this.verticalSpeed).toFixed(1)}, forward ${this.horizontalSpeed.toFixed(1)}` });
       }
+    }
+    if (!this.armed) {
+      if (alt > 3) this.armed = true;
+      if (alt < -1) this.evaluateTouchdown();
+      return;
     }
     if (alt < 1.5) this.emitOnce('contact');
     if (alt <= 0) this.evaluateTouchdown();
@@ -357,3 +393,29 @@ export function descentAutopilot(sim: DescentSim): DescentControls {
   return { throttle, dir };
 }
 
+
+/**
+ * Lunar ascent autopilot: vertical rise to clear the terrain, then pitch over
+ * toward the orbital direction `east`, holding a climb-rate profile that levels
+ * off near 18 km while horizontal speed builds to circular. Cut-off at circular
+ * speed gives a near-circular orbit.
+ */
+export function lunarAscentAutopilot(sim: DescentSim, east: Vec3, targetAltitude = 18_000): DescentControls {
+  const up = sim.up;
+  const alt = sim.altitude;
+  const r = len(sim.r);
+  const v = sim.v;
+  const vz = dot(v, up);
+  const vhVec = sub(v, scale(up, vz));
+  const vh = len(vhVec);
+  const vc = Math.sqrt(MU_MOON / r);
+  if (vh >= vc && alt > 5_000) return { throttle: 0, dir: sim.dir };
+  const amax = sim.maxAccel || 1;
+  const gEff = sim.gravity - (vh * vh) / r;
+  const fwd = norm(sub(east, scale(up, dot(east, up))));
+  if (alt < 150) return { throttle: 1, dir: up };
+  const vzRef = Math.max(-5, Math.min(120, (targetAltitude - alt) / 60));
+  const aV = Math.max(0, Math.min(0.95 * amax, (vzRef - vz) * 0.25 + gEff));
+  const aH = Math.sqrt(Math.max(0, amax * amax - aV * aV));
+  return { throttle: 1, dir: norm(add(scale(up, aV), scale(fwd, aH))) };
+}

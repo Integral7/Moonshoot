@@ -5,9 +5,11 @@ import type { Ephemeris } from '../physics/bodies';
 import { DEG, MU_EARTH, R_EARTH } from '../physics/constants';
 import { applyBurn, planTli, stateAt } from '../physics/planner';
 import type { OrbitState } from '../physics/patched';
-import { vec } from '../physics/vec';
+import { rotateZ, scale, vec, type Vec3 } from '../physics/vec';
+import { moonRotation } from '../physics/bodies';
+import { R_MOON } from '../physics/constants';
 import { flyAscent } from './ascent';
-import { DEFAULT_DESIGN, Vehicle, type VehicleState } from './vehicle';
+import { DEFAULT_DESIGN, Vehicle, createVehicleState, type VehicleState } from './vehicle';
 import { OrbitalFlight, lunarApproach, planLunarCorrection } from './orbital';
 
 export const PARKING_ALTITUDE = 185e3;
@@ -125,4 +127,26 @@ export function landingPreset(): LandingPreset {
     landingCache = { orbit: f.s, vehicle: structuredClone(f.vehicle.state), eph: p.eph };
   }
   return structuredClone(landingCache);
+}
+
+export interface ReturnPreset {
+  surface: { r: Vec3; t: number; eph: Ephemeris };
+  vehicle: VehicleState;
+}
+
+/**
+ * Free-play return start: the recommended lander on the surface 3.3 days into
+ * the mission, at a site with the Sun 25 deg up in the morning sky, with 10% of
+ * its descent propellant left.
+ */
+export function returnPreset(): ReturnPreset {
+  const eph = STANDARD_EPHEMERIS;
+  const t = 3.3 * 86400;
+  const a = -65 * DEG;
+  const inertialDir = vec(Math.cos(a), Math.sin(a), 0);
+  const fixed = rotateZ(inertialDir, -moonRotation(t, eph));
+  const vehicle = createVehicleState({ name: DEFAULT_DESIGN.name, parts: DEFAULT_DESIGN.parts.slice(1, 15) });
+  vehicle.design = { name: DEFAULT_DESIGN.name, parts: DEFAULT_DESIGN.parts.slice(1, 15) };
+  vehicle.stages[0].prop *= 0.1;
+  return { surface: { r: scale(fixed, R_MOON), t, eph }, vehicle };
 }

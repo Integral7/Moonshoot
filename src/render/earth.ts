@@ -9,6 +9,7 @@ import {
   SIMPLEX_3D,
 } from './glsl';
 import type { QualityPreset } from './quality';
+import { SEA_LEVEL as SHARED_SEA_LEVEL } from '../sim/earthSurface';
 
 // Continents: shared between the color and aux bakes.
 const EARTH_FUNCS = /* glsl */ `
@@ -21,7 +22,8 @@ float continent(vec3 p) {
 }
 `;
 
-const SEA_LEVEL = 0.035;
+// Shared with the JS land mask so splashdown checks match the rendered oceans.
+const SEA_LEVEL = SHARED_SEA_LEVEL;
 
 const EARTH_COLOR_FRAG = /* glsl */ `
 ${EARTH_FUNCS}

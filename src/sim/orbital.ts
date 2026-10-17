@@ -508,3 +508,130 @@ export function planDoi(f: OrbitalFlight, sun: Vec3, sunElevation = 20 * (Math.P
   const vh = Math.sqrt(Math.max(0, len(at.v) ** 2 - vr * vr));
   return { t: tN, dv: { prograde: vNew - vh, normal: 0, radial: -vr } };
 }
+
+/** Entry interface radius, m (122 km). */
+export const ENTRY_RADIUS = BODIES.earth.radius + 121_920;
+
+/**
+ * Vacuum perigee radius of an Earth-return conic with specific energy `energy`
+ * that crosses the entry interface at flight-path angle `gamma` (rad, negative).
+ */
+export function perigeeForEntryAngle(energy: number, gamma: number): number {
+  const mu = BODIES.earth.mu;
+  const v = Math.sqrt(2 * (energy + mu / ENTRY_RADIUS));
+  const hh = ENTRY_RADIUS * v * Math.cos(gamma);
+  const e = Math.sqrt(Math.max(0, 1 + (2 * energy * hh * hh) / (mu * mu)));
+  return (hh * hh) / mu / (1 + e);
+}
+
+/** Flight-path angle (rad) at the entry interface for an Earth conic, or NaN if it misses. */
+export function entryAngleOf(el: { energy: number; h: number }): number {
+  const mu = BODIES.earth.mu;
+  const v = Math.sqrt(2 * (el.energy + mu / ENTRY_RADIUS));
+  const c = el.h / (ENTRY_RADIUS * v);
+  return c > 1 ? NaN : -Math.acos(c);
+}
+
+/** The Earth-centered leg of a prediction that starts away from Earth (after leaving the Moon), or the first leg if Earth-bound. */
+export function earthApproach(p: Prediction): { signedRadius: number; perigee: number; energy: number; gamma: number; time: number } | null {
+  const segs = p.segments;
+  const seg = segs[0].body === 'earth' ? segs[0] : segs.find((s, i) => i > 0 && s.body === 'earth');
+  if (!seg) return null;
+  const el = seg.elements;
+  if (el.e < 1 && el.ra < 300_000e3 && segs[0].body === 'moon') return null; // still bound near the Moon's region? (not a return)
+  const sgn = el.hVec.z >= 0 ? 1 : -1;
+  const ev = p.events.find((e) => (e.kind === 'atmosphere' || e.kind === 'impact') && e.body === 'earth');
+  return { signedRadius: el.rp * sgn, perigee: el.rp - BODIES.earth.radius, energy: el.energy, gamma: entryAngleOf(el), time: ev?.t ?? NaN };
+}
+
+const DEG_RAD = Math.PI / 180;
+
+/**
+ * Trans-Earth injection from a near-circular lunar orbit: a prograde burn whose
+ * timing is solved so the return conic crosses the entry interface at `gamma`.
+ */
+export function planTei(f: OrbitalFlight, gamma = -6.5 * DEG_RAD, vInf = 950): ManeuverNode | null {
+  if (f.s.body !== 'moon') return null;
+  const el = f.elements();
+  if (el.e >= 0.5) return null;
+  const mu = BODIES.moon.mu;
+  const r = len(f.s.r);
+  const dvMag = Math.sqrt(vInf * vInf + (2 * mu) / r) - len(f.s.v);
+  const T = el.period;
+  const t0 = f.t + Math.max(300, f.vehicle.burnTimeFor(dvMag) / 2 + 120);
+  const objective = (tb: number, sgn: number) => {
+    const at = coastTo(f.s, tb, f.eph);
+    const after: OrbitState = { ...at, v: add(at.v, nodeToInertial(at.r, at.v, { prograde: dvMag, normal: 0, radial: 0 })) };
+    const ap = earthApproach(predictTrajectory(after, 6 * 86400, { eph: f.eph, maxSegments: 3, maxAngleStep: 0.05 }));
+    if (!ap) return NaN;
+    return ap.signedRadius - sgn * perigeeForEntryAngle(ap.energy, gamma);
+  };
+  for (const sgn of [1, -1]) {
+    const N = 120;
+    let prevT = NaN;
+    let prevF = NaN;
+    for (let k = 0; k <= N; k++) {
+      const tb = t0 + (T * k) / N;
+      const fv = objective(tb, sgn);
+      if (Number.isFinite(fv) && Number.isFinite(prevF) && Math.sign(fv) !== Math.sign(prevF) && Math.abs(fv - prevF) < 2e8) {
+        let lo = prevT, hi = tb, fLo = prevF;
+        for (let it = 0; it < 50 && hi - lo > 1e-3; it++) {
+          const mid = 0.5 * (lo + hi);
+          const fm = objective(mid, sgn);
+          if (!Number.isFinite(fm)) break;
+          if (Math.sign(fm) === Math.sign(fLo)) { lo = mid; fLo = fm; } else hi = mid;
+        }
+        const node: ManeuverNode = { t: 0.5 * (lo + hi), dv: { prograde: dvMag, normal: 0, radial: 0 } };
+        return refineNodeFinite(f, node, (afterF) => {
+          const ap = earthApproach(afterF.predict(6 * 86400, 3));
+          return ap ? ap.signedRadius - sgn * perigeeForEntryAngle(ap.energy, gamma) : NaN;
+        }, 120);
+      }
+      prevT = tb;
+      prevF = fv;
+    }
+  }
+  return null;
+}
+
+/** Small correction on the way home to put the entry angle at `gamma` (impulsive, smallest axis). */
+export function planEarthCorrection(f: OrbitalFlight, tNode: number, gamma = -6.5 * DEG_RAD, maxDv = 150): ManeuverNode | null {
+  const at = coastTo(f.s, tNode, f.eph);
+  let best: ManeuverNode | null = null;
+  for (const comp of ['radial', 'prograde', 'normal'] as const) {
+    const objective = (x: number) => {
+      const dv: NodeDeltaV = { prograde: 0, normal: 0, radial: 0 };
+      dv[comp] = x;
+      const after: OrbitState = { ...at, v: add(at.v, nodeToInertial(at.r, at.v, dv)) };
+      const ap = earthApproach(predictTrajectory(after, 6 * 86400, { eph: f.eph, maxSegments: 3, maxAngleStep: 0.05 }));
+      if (!ap) return NaN;
+      const sgn = Math.sign(ap.signedRadius) || 1;
+      return ap.signedRadius - sgn * perigeeForEntryAngle(ap.energy, gamma);
+    };
+    const xs: number[] = [0];
+    for (let a = 0.02; a <= maxDv; a *= 1.35) xs.push(a, -a);
+    xs.sort((p, q) => p - q);
+    const fs = xs.map(objective);
+    let bracket: [number, number] | null = null;
+    for (let i = 0; i + 1 < xs.length; i++) {
+      if (!Number.isFinite(fs[i]) || !Number.isFinite(fs[i + 1]) || Math.sign(fs[i]) === Math.sign(fs[i + 1])) continue;
+      if (Math.abs(fs[i] - fs[i + 1]) > 5e7) continue;
+      if (!bracket || Math.min(Math.abs(xs[i]), Math.abs(xs[i + 1])) < Math.min(Math.abs(bracket[0]), Math.abs(bracket[1]))) bracket = [xs[i], xs[i + 1]];
+    }
+    if (!bracket) continue;
+    let [lo, hi] = bracket;
+    let fLo = objective(lo);
+    for (let k = 0; k < 50 && hi - lo > 1e-4; k++) {
+      const mid = 0.5 * (lo + hi);
+      const fm = objective(mid);
+      if (!Number.isFinite(fm)) break;
+      if (Math.sign(fm) === Math.sign(fLo)) { lo = mid; fLo = fm; } else hi = mid;
+    }
+    const x = 0.5 * (lo + hi);
+    const dv: NodeDeltaV = { prograde: 0, normal: 0, radial: 0 };
+    dv[comp] = x;
+    if (!best || Math.abs(x) < nodeMagnitude(best.dv)) best = { t: tNode, dv };
+    if (Math.abs(x) < 5) break;
+  }
+  return best;
+}

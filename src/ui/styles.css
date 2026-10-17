@@ -304,3 +304,19 @@ p { margin: 0.4em 0; }
 .att-buttons .icon-btn.active { border-color: var(--good); color: #c9f5da; }
 .label-node { color: #7dffb2; font-weight: 600; }
 .label-planned { opacity: 0.95; }
+
+/* ---------- Telemetry graph ---------- */
+.telemetry-graph { margin: 0.6rem 0; }
+.graph-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.chip { font: inherit; font-size: 0.72rem; color: #c3c2b7; background: transparent; border: 1px solid var(--panel-border); border-radius: 999px; padding: 0.12rem 0.55rem; cursor: pointer; }
+.chip.active { color: #f0efec; border-color: #3987e5; background: rgba(57, 135, 229, 0.18); }
+.graph-plot { position: relative; margin-top: 0.35rem; }
+.graph-canvas { display: block; width: 100%; background: #10161f; border-radius: 4px; cursor: crosshair; }
+.graph-tooltip { position: absolute; top: 4px; display: none; pointer-events: none; background: #0b111b; color: #f0efec; border: 1px solid var(--panel-border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.72rem; white-space: nowrap; }
+.graph-table { max-height: 12rem; overflow: auto; }
+
+/* ---------- Replay ---------- */
+.replay-panel { position: absolute; left: 1rem; right: 1rem; bottom: 1rem; padding: 0.6rem 0.9rem; }
+.replay-scrub { flex: 1; accent-color: var(--accent); }
+.debrief-graph { margin-top: 0.6rem; }
+.replay-card .row { margin-top: 0.4rem; }

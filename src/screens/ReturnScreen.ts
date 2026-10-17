@@ -22,6 +22,7 @@ import type { TelemetryRow } from '../ui/Hud';
 import type { Planner } from '../ui/ManeuverPanel';
 import { h } from '../ui/dom';
 import { OrbitalScreen } from './OrbitalScreen';
+import type { TrackSample } from '../sim/replay';
 
 type Mode = 'surface' | 'ascent' | 'orbit' | 'entry' | 'done';
 const TARGET_GAMMA = -6.5 * DEG;
@@ -527,6 +528,17 @@ export class ReturnScreen extends OrbitalScreen {
     this.patch.group.quaternion.setFromRotationMatrix(m);
     this.patch.group.position.copy(toS(scale(upB, R_EARTH - 1)));
     this.map.world.earth.spin.add(this.patch.group);
+  }
+
+  protected override replaySample(): TrackSample | null {
+    if (this.mode === 'orbit') return super.replaySample();
+    if ((this.mode === 'entry' || this.mode === 'done') && this.entry) {
+      const e = this.entry;
+      return { body: 'earth', r: e.r, dir: norm(scale(e.forces.airVelocity, -1)), throttle: 0, stage: e.vehicle.state.stage };
+    }
+    if (!this.ascent) return null;
+    const a = this.ascent;
+    return { body: 'moon', r: a.r, dir: a.dir, throttle: a.throttle, stage: a.vehicle.state.stage };
   }
 
   protected override teardown(): void {

@@ -24,6 +24,8 @@ import { DEFAULT_DESIGN, type VehicleDesign, type VehicleState } from '../sim/ve
 import type { TelemetryRow } from '../ui/Hud';
 import { h } from '../ui/dom';
 import { FlightScreen } from './FlightScreen';
+import type { TrackSample } from '../sim/replay';
+import type { Ephemeris } from '../physics/bodies';
 
 type CamMode = 'chase' | 'pad' | 'map';
 
@@ -458,6 +460,15 @@ export class LaunchScreen extends FlightScreen<LaunchSnapshot> {
   protected telemetrySample(): Record<string, number> {
     const s = this.sim;
     return { alt: s.altitude, speed: len(s.v), q: s.forces.q, g: s.forces.gLoad, pitch: s.pitch, throttle: s.throttle, apo: s.altitude > 1000 ? s.apoapsisAltitude : 0 };
+  }
+
+  protected override replaySample(): TrackSample | null {
+    const s = this.sim;
+    return { body: 'earth', r: s.r, dir: s.thrustDirection, throttle: s.throttle, stage: s.vehicle.state.stage };
+  }
+
+  protected override replayContext(): { design: VehicleDesign; eph: Ephemeris } {
+    return { design: this.sim.vehicle.state.design, eph: this.sim.eph };
   }
 
   protected snapshot(): LaunchSnapshot {

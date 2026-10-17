@@ -14,6 +14,9 @@ import type { TelemetryRow } from '../ui/Hud';
 import { ManeuverPanel, type Planner } from '../ui/ManeuverPanel';
 import { h } from '../ui/dom';
 import { FlightScreen, WARP_LEVELS } from './FlightScreen';
+import type { TrackSample } from '../sim/replay';
+import type { VehicleDesign } from '../sim/vehicle';
+import type { Ephemeris } from '../physics/bodies';
 
 const ATTITUDES: { id: AttitudeMode; label: string }[] = [
   { id: 'prograde', label: 'PRO' },
@@ -234,8 +237,8 @@ export abstract class OrbitalScreen<S = Record<string, number>> extends FlightSc
 
   protected telemetryChannels(): ChannelDef[] {
     return [
-      { id: 'alt', label: 'Altitude', unit: 'km', scale: 1e-3 },
-      { id: 'speed', label: 'Speed', unit: 'm/s' },
+      { id: 'alt', label: 'Altitude (SOI body)', unit: 'km', scale: 1e-3 },
+      { id: 'speed', label: 'Speed (SOI body)', unit: 'm/s' },
       { id: 'moonDist', label: 'Moon distance', unit: 'km', scale: 1e-3 },
       { id: 'dv', label: 'Δv used', unit: 'm/s' },
     ];
@@ -360,6 +363,15 @@ export abstract class OrbitalScreen<S = Record<string, number>> extends FlightSc
     for (const p of this.plumes) p.plume.dispose();
     this.model.dispose();
     this.map.dispose();
+  }
+
+  protected override replaySample(): TrackSample | null {
+    const f = this.flight;
+    return { body: f.s.body, r: f.s.r, dir: f.attitudeVector(), throttle: f.isBurning ? f.thrustLevel : 0, stage: f.vehicle.state.stage };
+  }
+
+  protected override replayContext(): { design: VehicleDesign; eph: Ephemeris } {
+    return { design: this.flight.vehicle.state.design, eph: this.flight.eph };
   }
 
   protected override extraDebug(): Record<string, unknown> {

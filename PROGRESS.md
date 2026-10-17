@@ -45,8 +45,8 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 7 | Cruise (patched conic, MCC, warp) | ✅ done |
 | 8 | LOI + landing | ✅ done (user approved M9–M12) |
 | 9 | Return: ascent, TEI, reentry, splashdown | ✅ done |
-| 10 | Scoring/failure analysis + replay w/ telemetry graphs | ⏳ next |
-| 11 | Campaign polish, free-play states, perf | ☐ |
+| 10 | Scoring/failure analysis + replay w/ telemetry graphs | ✅ done |
+| 11 | Campaign polish, free-play states, perf | ⏳ next |
 | 12 | Docs + final headless pass | ☐ — **pause after this** |
 
 ## Log
@@ -172,8 +172,18 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - Fix: warp limits must be values on `WARP_LEVELS`; `setWarpLevel` now snaps down to the nearest level.
 - E2E: free-play return lifts off, TEI, coasts, enters at −6.50°, splashes down at 8.7 m/s in the ocean.
 
+### M10 — Replays + graphs (done)
+- `src/sim/replay.ts`: `TrackRecorder` (body-relative position, attitude, throttle, stage; warp-scaled interval,
+  decimation), `trackAt` interpolation (no interpolation across SOI switches), `compactReplay`, guarded localStorage
+  store (8 newest, drops oldest if quota is hit, session fallback).
+- `src/ui/TelemetryGraph.ts`: canvas chart, one channel at a time (chips; no dual axes), dark-palette series slot 1,
+  recessive grid, event marks, hover crosshair + tooltip, replay cursor, click/drag scrub, table view.
+- `FlightScreen`: `replaySample()` / `replayContext()` hooks (implemented in Launch, Orbital, Landing, Return), saves a
+  replay at phase end, debrief shows the telemetry graph + "View replay".
+- `ReplayScreen` (MapView playback, trails per SOI body, play/pause, speed, scrubber, synced graph) and
+  `ReplayListScreen` (main menu → Replays).
+
 ## Next steps
-M10: telemetry graph component in the debrief (channels, marks), replay recording (vehicle ECI track + attitude +
-throttle + body) per phase, replay viewer screen (scrubber, synced graph cursor) + main-menu Replays list (localStorage,
-decimated). M11: campaign save/resume, mission summary after return, full-chain campaign e2e. M12: README
-"How this was built", final headless pass, PAUSE.
+M11: campaign save/resume (localStorage) + "Continue campaign", mission summary after a successful return
+(per-phase scores, total), full-chain campaign e2e with autopilots, perf/quality pass (screenshots at low/high).
+M12: README "How this was built", final headless pass, PAUSE with summary + Windows commands.

@@ -18,6 +18,7 @@ import type { TelemetryRow } from '../ui/Hud';
 import type { Planner } from '../ui/ManeuverPanel';
 import { h } from '../ui/dom';
 import { OrbitalScreen } from './OrbitalScreen';
+import type { TrackSample } from '../sim/replay';
 
 type Mode = 'orbit' | 'descent' | 'surface';
 
@@ -370,6 +371,12 @@ export class LandingScreen extends OrbitalScreen {
     this.surface!.update(sim, this.model, this.plumes, this.t, this.time, dt, site, this.app.height);
     const status = sim.landed ? 'TOUCHDOWN' : this.autopilot ? 'LANDING AUTOPILOT' : this.hold === 'retrograde' ? 'RETROGRADE HOLD' : this.hold === 'vertical' ? 'VERTICAL HOLD' : 'MANUAL ATTITUDE';
     this.hud.setStatus(status, sim.altitude < 100 ? 'warn' : 'info');
+  }
+
+  protected override replaySample(): TrackSample | null {
+    const d = this.descent;
+    if (this.mode === 'orbit' || !d) return super.replaySample();
+    return { body: 'moon', r: d.r, dir: d.dir, throttle: d.throttle, stage: d.vehicle.state.stage };
   }
 
   protected override teardown(): void {

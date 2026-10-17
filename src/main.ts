@@ -9,6 +9,7 @@ import { LaunchScreen } from './screens/LaunchScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 import { OrbitScreen } from './screens/OrbitScreen';
 import { ReturnScreen } from './screens/ReturnScreen';
+import { ReplayListScreen } from './screens/ReplayListScreen';
 
 declare global {
   interface Window {
@@ -31,6 +32,7 @@ if (!root) throw new Error('#app root missing');
 const app = new App(root);
 app.registerScreen('menu', () => new MainMenuScreen());
 app.registerScreen('freeplay', () => new FreePlayScreen());
+app.registerScreen('replays', () => new ReplayListScreen());
 registerPhase('design', (m) => new DesignScreen(m));
 registerPhase('launch', (m) => new LaunchScreen(m));
 registerPhase('orbit', (m) => new OrbitScreen(m));

@@ -7,6 +7,11 @@ import { CalloutSystem } from '../sim/callouts';
 import { Mission, PHASES } from '../sim/mission';
 import type { PhaseResult } from '../sim/scoring';
 import { TelemetryRecorder, type ChannelDef } from '../sim/telemetry';
+import { TrackRecorder, saveReplay, type Replay, type TrackSample } from '../sim/replay';
+import { DEFAULT_DESIGN, type VehicleDesign } from '../sim/vehicle';
+import { DEFAULT_EPHEMERIS, type Ephemeris } from '../physics/bodies';
+import { TelemetryGraph } from '../ui/TelemetryGraph';
+import { ReplayScreen } from './ReplayScreen';
 import { Hud, type TelemetryRow } from '../ui/Hud';
 import { createResultsPanel } from '../ui/ResultsPanel';
 import { createSettingsPanel } from '../ui/SettingsPanel';
@@ -26,6 +31,8 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
   protected hud!: Hud;
   protected callouts = new CalloutSystem<Snapshot>();
   protected telemetry!: TelemetryRecorder;
+  protected track!: TrackRecorder;
+  private replay: Replay | null = null;
   /** Mission elapsed time, s. */
   t = 0;
   protected warpIndex = 0;
@@ -78,6 +85,7 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
     });
     this.callouts.onCallout((c) => this.hud.addCallout(c));
     this.telemetry = new TelemetryRecorder(this.telemetryChannels(), 0.5);
+    this.track = new TrackRecorder(0.5);
     window.addEventListener('keydown', this.keyDown);
     window.addEventListener('keyup', this.keyUp);
     this.setup();
@@ -98,6 +106,8 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
       this.simulate(simDt);
       if (!this.ended) {
         this.telemetry.sample(this.t, this.telemetrySample(), this.warp);
+        const ts = this.replaySample();
+        if (ts) this.track.sample(this.t, ts, this.warp);
         this.callouts.evaluate(this.t, this.snapshot());
       }
     }
@@ -236,13 +246,50 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
     this.mission.complete(result);
     if (result.success && carry) Object.assign(this.mission.carry, carry, { t: this.t });
     this.telemetry.sample(this.t, this.telemetrySample(), 1, true);
+    const last = this.replaySample();
+    if (last) this.track.sample(this.t, last, 1, true);
+    this.replay = this.saveReplay(result);
     this.callouts.say(this.t, 'FLIGHT', result.success ? 'Phase complete. Good work, everyone.' : 'We have a failure. Lock your consoles, record your data.', result.success ? 'good' : 'bad');
     const actions = phaseEndActions(this.app, this.mission, result, () => this.restartPhase());
+    const replay = this.replay;
+    if (replay) actions.splice(actions.length - 1, 0, { id: 'replay', label: 'View replay', onClick: () => this.app.go(new ReplayScreen(replay)) });
     this.showOverlay(createResultsPanel(result, PHASES[this.mission.phase].title, actions, this.debriefExtras()));
   }
 
   /** Extra debrief content (telemetry graphs etc.). */
   protected debriefExtras(): HTMLElement | undefined {
-    return undefined;
+    if (this.telemetry.length < 3) return undefined;
+    return h('div', { class: 'debrief-graph' }, h('h3', { text: 'Telemetry' }), new TelemetryGraph(this.telemetry.data, { height: 140 }).root);
+  }
+
+  /** Vehicle track sample for the replay (null if nothing to record yet). */
+  protected replaySample(): TrackSample | null {
+    return null;
+  }
+
+  /** Design and ephemeris the replay should be rendered with. */
+  protected replayContext(): { design: VehicleDesign; eph: Ephemeris } {
+    return { design: (this.mission.carry.design as VehicleDesign | undefined) ?? DEFAULT_DESIGN, eph: DEFAULT_EPHEMERIS };
+  }
+
+  private saveReplay(result: PhaseResult): Replay | null {
+    if (this.track.length < 2) return null;
+    const ctx = this.replayContext();
+    try {
+      return saveReplay({
+        id: `${this.mission.phase}-${Date.now()}`,
+        phase: this.mission.phase,
+        title: PHASES[this.mission.phase].title,
+        date: new Date().toISOString(),
+        score: result.score,
+        success: result.success,
+        design: ctx.design,
+        eph: ctx.eph,
+        track: this.track.track,
+        telemetry: this.telemetry.data,
+      });
+    } catch {
+      return null;
+    }
   }
 }

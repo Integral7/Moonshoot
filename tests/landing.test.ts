@@ -79,3 +79,31 @@ describe('powered descent', () => {
     expect(sim.touchdown!.outcome).toBe('crashed');
   });
 });
+
+describe('lunar arrival planners', () => {
+  it('LOI then DOI puts periapsis at 15 km in morning sunlight', async () => {
+    const { landingPreset } = await import('../src/sim/presets');
+    const { OrbitalFlight, planDoi, refineNodeFinite } = await import('../src/sim/orbital');
+    const p = landingPreset();
+    expect(p.orbit.body).toBe('moon');
+    const f = new OrbitalFlight(p.orbit, p.vehicle, p.eph);
+    const loi0 = f.circularizeNode('periapsis')!;
+    const loi = refineNodeFinite(f, loi0);
+    expect(Math.abs(loi.dv.prograde)).toBeGreaterThan(600);
+    expect(Math.abs(loi.dv.prograde)).toBeLessThan(1_000);
+    f.setNode(loi);
+    f.executeNode();
+    f.advance(loi.t - f.t + f.nodeBurnTime() + 60);
+    expect(f.elements().e).toBeLessThan(0.05);
+    const sun = vec(1, 0, 0);
+    const doi = planDoi(f, sun)!;
+    expect(doi).not.toBeNull();
+    expect(Math.abs(doi.dv.prograde)).toBeLessThan(60);
+    f.setNode(doi);
+    f.executeNode();
+    f.advance(doi.t - f.t + 60);
+    const el = f.elements();
+    expect(el.rp - R_MOON).toBeGreaterThan(8e3);
+    expect(el.rp - R_MOON).toBeLessThan(25e3);
+  });
+});

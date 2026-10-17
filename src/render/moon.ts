@@ -108,6 +108,8 @@ export interface MoonVisual {
   spin: THREE.Group;
   setSunDirection(dir: THREE.Vector3): void;
   update(rotation: number): void;
+  /** Show or hide the sphere itself (children of `spin`, like terrain tiles, stay visible). */
+  setSurfaceVisible(v: boolean): void;
   dispose(): void;
 }
 
@@ -147,6 +149,9 @@ export function createMoon(renderer: THREE.WebGLRenderer, q: QualityPreset, radi
     },
     update(rotation) {
       spin.rotation.y = rotation;
+    },
+    setSurfaceVisible(v) {
+      mesh.visible = v;
     },
     dispose() {
       mesh.geometry.dispose();

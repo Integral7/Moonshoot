@@ -469,3 +469,42 @@ export function planLunarCorrection(f: OrbitalFlight, tNode: number, targetAltit
   }
   return best;
 }
+
+/**
+ * Descent orbit insertion: from a near-circular lunar orbit, lower periapsis to
+ * `periapsisAltitude`, choosing the periapsis point where the Sun stands
+ * `sunElevation` above the horizon on the morning side (Sun rising), like Apollo.
+ * `sun` is the unit direction to the Sun (inertial).
+ */
+export function planDoi(f: OrbitalFlight, sun: Vec3, sunElevation = 20 * (Math.PI / 180), periapsisAltitude = 15e3, minLead = 120): ManeuverNode | null {
+  if (f.s.body !== 'moon') return null;
+  const mu = BODIES.moon.mu;
+  const el = f.elements();
+  if (el.e >= 0.3) return null;
+  const T = el.period;
+  const target = Math.sin(sunElevation);
+  // Sample one orbit for the rising crossing of the target sun elevation.
+  const N = 720;
+  let tP = NaN;
+  let prev = NaN;
+  for (let k = 0; k <= N * 2; k++) {
+    const t = f.t + minLead + T / 2 + (T * k) / N;
+    const st = coastTo(f.s, t, f.eph);
+    const e = (st.r.x * sun.x + st.r.y * sun.y + st.r.z * sun.z) / len(st.r);
+    if (Number.isFinite(prev) && prev < target && e >= target) {
+      tP = t;
+      break;
+    }
+    prev = e;
+  }
+  if (!Number.isFinite(tP)) return null;
+  const tN = tP - T / 2;
+  const at = coastTo(f.s, tN, f.eph);
+  const rn = len(at.r);
+  const rp = BODIES.moon.radius + periapsisAltitude;
+  const vNew = Math.sqrt(mu * (2 / rn - 2 / (rn + rp)));
+  // Horizontal speed now; the burn is (nearly) prograde/retrograde.
+  const vr = (at.r.x * at.v.x + at.r.y * at.v.y + at.r.z * at.v.z) / rn;
+  const vh = Math.sqrt(Math.max(0, len(at.v) ** 2 - vr * vr));
+  return { t: tN, dv: { prograde: vNew - vh, normal: 0, radial: -vr } };
+}

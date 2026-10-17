@@ -37,13 +37,13 @@ export abstract class OrbitalScreen<S = Record<string, number>> extends FlightSc
   protected panel!: ManeuverPanel;
   protected prediction: Prediction | null = null;
   protected planned: Prediction | null = null;
-  private plumes: { stage: number; plume: Plume }[] = [];
+  protected plumes: { stage: number; plume: Plume }[] = [];
   private predictTimer = 0;
   private dirty = true;
   private warpingToNode = false;
-  private keys = new Set<string>();
+  protected keys = new Set<string>();
   private attButtons = new Map<AttitudeMode, HTMLButtonElement>();
-  private time = 0;
+  protected time = 0;
   private shownStage = -1;
   /** Phase end time for warp limiting (Infinity if none). */
   protected phaseEndTime = Infinity;
@@ -297,16 +297,20 @@ export abstract class OrbitalScreen<S = Record<string, number>> extends FlightSc
     this.map.vesselEci = toEci(f.s, f.eph);
     const dir = eciDirToScene(f.attitudeVector());
     this.model.root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    if (this.shownStage !== f.vehicle.state.stage) {
-      this.shownStage = f.vehicle.state.stage;
-      this.model.stages.forEach((g, i) => (g.visible = i >= this.shownStage));
-      if (this.model.les) this.model.les.visible = f.vehicle.state.lesAttached;
-    }
+    this.syncModelStages(f.vehicle);
     for (const p of this.plumes) p.plume.update(p.stage === f.vehicle.state.stage ? f.thrustLevel * (f.isBurning ? 1 : 0) : 0, 1, this.time);
     this.map.update(this.t, dt);
     for (const [id, b] of this.attButtons) b.classList.toggle('active', id === f.attitude);
     this.panel.render();
     this.hud.setStatus(this.ended ? '' : f.isBurning ? 'BURN IN PROGRESS' : f.autoBurn ? `BURN IN ${formatDuration(f.autoBurn.start - this.t)}` : this.statusText(), f.isBurning ? 'warn' : 'info');
+  }
+
+  /** Hide model stages that have been jettisoned. */
+  protected syncModelStages(v: { state: { stage: number; lesAttached: boolean } }): void {
+    if (this.shownStage === v.state.stage) return;
+    this.shownStage = v.state.stage;
+    this.model.stages.forEach((g, i) => (g.visible = i >= this.shownStage));
+    if (this.model.les) this.model.les.visible = v.state.lesAttached;
   }
 
   protected repredict(): void {

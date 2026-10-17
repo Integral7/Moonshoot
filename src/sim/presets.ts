@@ -8,6 +8,7 @@ import type { OrbitState } from '../physics/patched';
 import { vec } from '../physics/vec';
 import { flyAscent } from './ascent';
 import { DEFAULT_DESIGN, Vehicle, type VehicleState } from './vehicle';
+import { OrbitalFlight, lunarApproach, planLunarCorrection } from './orbital';
 
 export const PARKING_ALTITUDE = 185e3;
 
@@ -98,4 +99,30 @@ export function vehicleAfterDv(state: VehicleState, dv: number): VehicleState {
 /** Vehicle state on the translunar coast (after ascent, circularization and TLI). */
 export function cruiseVehicle(): VehicleState {
   return vehicleAfterDv(orbitPreset().vehicle, 3_160);
+}
+
+export interface LandingPreset {
+  orbit: OrbitState;
+  vehicle: VehicleState;
+  eph: Ephemeris;
+}
+
+let landingCache: LandingPreset | null = null;
+
+/** Free-play lunar arrival: the cruise preset after a mid-course correction, one hour before periapsis. */
+export function landingPreset(): LandingPreset {
+  if (!landingCache) {
+    const p = cruisePreset();
+    const f = new OrbitalFlight(p.orbit, cruiseVehicle(), p.eph);
+    const mcc = planLunarCorrection(f, f.t + 1800);
+    if (mcc) {
+      f.setNode(mcc);
+      f.executeNode();
+      f.advance(mcc.t - f.t + 60);
+    }
+    const ap = lunarApproach(f.predict(9 * 86400));
+    if (ap) f.advance(ap.time - 3600 - f.t);
+    landingCache = { orbit: f.s, vehicle: structuredClone(f.vehicle.state), eph: p.eph };
+  }
+  return structuredClone(landingCache);
 }

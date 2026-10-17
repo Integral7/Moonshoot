@@ -43,7 +43,7 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 5 | Launch | ✅ done |
 | 6 | Earth orbit + TLI maneuver node | ✅ done |
 | 7 | Cruise (patched conic, MCC, warp) | ✅ done |
-| 8 | LOI + landing | ⏳ next — **pause after this** |
+| 8 | LOI + landing | ✅ done — **paused for user go-ahead** |
 | 9 | Return: ascent, TEI, reentry, splashdown | ☐ |
 | 10 | Scoring/failure analysis + replay w/ telemetry graphs | ☐ |
 | 11 | Campaign polish, free-play states, perf | ☐ |
@@ -140,8 +140,26 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - Presets: `vehicleAfterDv`, `cruiseVehicle` (orbit preset minus TLI Δv).
 - E2E: free-play cruise plans a 1.8 m/s MCC and arrives at 110.0 km.
 
-## Next steps
-M8: `LandingScreen` with two modes. (a) Orbital (OrbitalScreen-like, Moon SOI): LOI planner (circularize at
-periapsis, retrograde), DOI planner (lower periapsis to ~15 km). (b) Powered descent: Moon-centered RK4 with
-terrain heightfield (JS noise + craters + boulders), manual throttle/pitch, landing radar, hazards (slope, boulders),
-fuel limit, touchdown evaluation vs leg limits, scored debrief. Then PAUSE with summary + Windows commands.
+### M8 — Lunar orbit + landing (done)
+- `src/util/noise.ts` (2D simplex, hash). `src/sim/terrain.ts` `LunarTerrain`: azimuthal-equidistant map around the
+  PDI sub-point (Moon-fixed), mare fBm + 4 crater layers (bowl/rim/ejecta) + roughness, `bouldersNear`, slope.
+- `src/sim/descent.ts` `DescentSim` (Moon-centered RK4, 20°/s slew, radar altitude, surface velocity incl. rotation,
+  fuel time, Apollo-style callout events) + `evaluateTouchdown` (legs: 3 m/s vertical, 1.5 horizontal, 12° tilt;
+  boulders; outcomes landed/hard/tipped/crashed) + `descentAutopilot` (vertical-priority guidance, descent rate paced
+  by braking time) + `findSafeSite` (landing-point redesignation below 400 m).
+- `planDoi` (periapsis 15 km where the Sun is 20° up on the morning side), `landingPreset` (cruise + MCC, Pe−1 h).
+- `render/terrainMesh.ts` `TerrainTile`: radially stretched square grid (p = q|q|) relative to tile center, in the
+  Moon spin group; vertex-color albedo; instanced boulders < 1.5 km; LPD ring. Moon `setSurfaceVisible` hides only the
+  sphere (the tile is a child of the Moon group!).
+- `LandingScreen` (OrbitalScreen with modes orbit → descent → surface): LOI (finite-refined circularize at Pe) + DOI
+  planners, Begin powered descent (< 25 km; jettisons stages below the legs), manual tilt/throttle/holds or
+  autopilot (G), dust, safe-site marker, scored debrief, carries `vehicle` + `surface {r (Moon-fixed), t, eph}`.
+- E2E: free-play LOI → DOI → PDI → autopilot touchdown (landed, 1.2 m/s).
+- Known: planning happens at frame-dependent sim times, so e2e outcomes vary slightly run to run.
+- Campaign chain design→launch→orbit→cruise→landing uses carry everywhere but has no single e2e run yet (M11).
+
+## Next steps (M9, after user go-ahead)
+Return phase: lunar ascent from `surface` (vertical rise then pitch-over to LLO, or direct ascent), TEI planner
+(Earth-return targeting entry flight-path angle −6.5° at 122 km), return coast + correction, capsule separation,
+reentry with banked lift (L/D 0.3), Sutton-Graves heating vs heat-shield limits, g-load, drogue/main chutes,
+splashdown (ocean check), scoring. Then M10 replay/graphs, M11 campaign polish, M12 docs; PAUSE after M12.

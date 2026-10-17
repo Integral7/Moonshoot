@@ -47,7 +47,7 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 9 | Return: ascent, TEI, reentry, splashdown | ✅ done |
 | 10 | Scoring/failure analysis + replay w/ telemetry graphs | ✅ done |
 | 11 | Campaign polish, free-play states, perf | ✅ done |
-| 12 | Docs + final headless pass | ⏳ next — **pause after this** |
+| 12 | Docs + final headless pass | ✅ done — **paused for user review** |
 
 ## Log
 ### M1 — Scaffold (done)
@@ -193,5 +193,12 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
   surface at Low and High. Bundle: ~813 KB JS (Three.js dominates).
 - README rewritten with full controls and "How this was built".
 
-## Next steps
-M12: final full test pass, PROGRESS wrap-up, push, PAUSE with summary + Windows commands.
+### M12 — Final pass (done)
+- `npm run check` (typecheck + 140 unit tests + production build + 16 headless e2e incl. the full campaign) passes
+  in ~14 min on SwiftShader.
+
+## Known limitations / ideas for later
+- e2e outcomes vary slightly run to run (planning happens at frame-dependent sim times); landing was flaky once.
+- Model simplifications are listed in the README (equatorial Moon orbit, fixed Sun, patched conics, point mass).
+- No audio; no rendezvous (direct-return architecture); terrain is not shown in replays (sphere only).
+- Faint radial shading at the terrain tile center (grid stretch); lunar near side vs far side is not enforced.

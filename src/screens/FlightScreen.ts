@@ -136,9 +136,12 @@ export abstract class FlightScreen<Snapshot = Record<string, number>> implements
     this.hud.setTelemetry(this.telemetryRows());
   }
 
+  /** Set the highest warp level not above `level` (and not above the current maximum). */
   setWarpLevel(level: number): void {
-    const idx = WARP_LEVELS.indexOf(level);
-    if (idx >= 0 && level <= this.maxWarp()) this.warpIndex = idx;
+    const cap = Math.min(level, this.maxWarp());
+    let idx = 0;
+    for (let i = 0; i < WARP_LEVELS.length; i++) if (WARP_LEVELS[i] <= cap) idx = i;
+    this.warpIndex = idx;
   }
 
   protected changeWarp(delta: number): void {

@@ -1,14 +1,10 @@
-import * as THREE from 'three';
-import { MOON, moonPosition, type Ephemeris } from '../physics/bodies';
+import { MOON, type Ephemeris } from '../physics/bodies';
 import { DEG, R_MOON } from '../physics/constants';
 import { FixedStepper } from '../physics/integrator';
 import { captureDeltaV } from '../physics/maneuver';
 import type { OrbitState } from '../physics/patched';
-import { add, cross, len, norm, scale, vec, type Vec3 } from '../physics/vec';
-import { eciDirToScene } from '../render/coords';
-import { SmokeSystem } from '../render/smoke';
-import { setStarBrightness } from '../render/starfield';
-import { TerrainTile } from '../render/terrainMesh';
+import { add, cross, norm, scale, vec, type Vec3 } from '../physics/vec';
+import { SurfaceScene } from '../render/SurfaceScene';
 import { SUN_DIRECTION_ECI } from '../render/World';
 import { DESCENT_STEP, DescentSim, descentAutopilot, findSafeSite, type DescentControls } from '../sim/descent';
 import type { Mission } from '../sim/mission';
@@ -30,8 +26,7 @@ export class LandingScreen extends OrbitalScreen {
   readonly id = 'landing';
   private mode: Mode = 'orbit';
   private descent: DescentSim | null = null;
-  private tile: TerrainTile | null = null;
-  private dust: SmokeSystem | null = null;
+  private surface: SurfaceScene | null = null;
   private stepper = new FixedStepper(DESCENT_STEP, 4000);
   private autopilot = false;
   private everManual = false;
@@ -159,10 +154,7 @@ export class LandingScreen extends OrbitalScreen {
     this.map.cam.minDistance = 8;
     this.map.cam.setDistance(70, true);
     this.map.cam.setAngles(Math.PI, 0.25, true);
-    this.tile = new TerrainTile(this.descent.terrain, this.app.quality.terrainResolution);
-    this.map.world.moon.spin.add(this.tile.group);
-    this.dust = new SmokeSystem(Math.max(60, this.app.quality.particleCount));
-    this.map.world.scene.add(this.dust.points);
+    this.surface = new SurfaceScene(this.map, this.descent, this.app.quality);
     this.pdiButton.remove();
     this.hud.setControls(
       this.apButton,
@@ -299,7 +291,7 @@ export class LandingScreen extends OrbitalScreen {
 
   protected override maxWarp(): number {
     if (this.mode === 'orbit') return super.maxWarp();
-    if (this.mode === 'descent') return this.fastDescent ? 20 : 4;
+    if (this.mode === 'descent') return this.fastDescent ? 50 : 5;
     return 1;
   }
 
@@ -367,52 +359,21 @@ export class LandingScreen extends OrbitalScreen {
     }
     this.time += dt;
     const sim = this.descent!;
-    const moonC = moonPosition(this.t, sim.eph);
-    const eci = add(moonC, sim.r);
-    this.map.vesselEci = eci;
-    const up = eciDirToScene(sim.up);
-    this.map.cam.up.copy(up);
-    const dirS = eciDirToScene(sim.dir);
-    this.model.root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirS);
     this.syncModelStages(sim.vehicle);
-    // Keep the landing-leg pads at the simulated contact point.
-    const bottom = this.model.stageBottoms[sim.vehicle.state.stage] ?? 0;
-    for (const p of this.plumes) p.plume.update(p.stage === sim.vehicle.state.stage ? sim.throttle : 0, 1, this.time);
-    // Terrain and hazards.
     const mp = sim.mapPos;
-    this.tile!.update(mp.x, mp.y, sim.altitude);
     this.suggestTimer -= dt;
     if (!this.autopilot && sim.altitude < 600 && this.suggestTimer <= 0 && !sim.landed) {
       this.suggestTimer = 1.5;
       this.suggested = findSafeSite(sim.terrain, mp.x, mp.y, 150, 10);
     }
-    this.tile!.setSite(sim.site ?? (sim.altitude < 600 ? this.suggested : null));
-    this.map.world.moon.setSurfaceVisible(sim.altitude > 40_000);
-    // Dust blown off the surface at low altitude.
-    if (this.dust) {
-      if (sim.altitude < 25 && sim.throttle > 0.05 && !sim.landed) {
-        const ground = add(moonC, scale(sim.up, len(sim.r) - sim.altitude));
-        const rnd = Math.random() * Math.PI * 2;
-        const e1 = norm(cross(sim.up, vec(0, 0, 1)));
-        const e2 = cross(sim.up, e1);
-        const spray = norm(add(scale(e1, Math.cos(rnd)), scale(e2, Math.sin(rnd))));
-        this.dust.emit(dt, 300 * sim.throttle * (1 - sim.altitude / 25), ground, vec(), spray, 40, 3, 2.5);
-      }
-      this.dust.setViewportHeight(this.app.height, this.map.camera.fov);
-      this.dust.setLight(0.8);
-      this.dust.update(dt, this.map.origin(), vec());
-    }
-    setStarBrightness(this.map.world.stars, 0.35);
-    this.map.update(this.t, dt);
-    // Offset the model after the map placed it at the vessel point.
-    this.model.root.position.addScaledVector(dirS, -bottom);
+    const site = sim.site ?? (sim.altitude < 600 ? this.suggested : null);
+    this.surface!.update(sim, this.model, this.plumes, this.t, this.time, dt, site, this.app.height);
     const status = sim.landed ? 'TOUCHDOWN' : this.autopilot ? 'LANDING AUTOPILOT' : this.hold === 'retrograde' ? 'RETROGRADE HOLD' : this.hold === 'vertical' ? 'VERTICAL HOLD' : 'MANUAL ATTITUDE';
     this.hud.setStatus(status, sim.altitude < 100 ? 'warn' : 'info');
   }
 
   protected override teardown(): void {
-    this.tile?.dispose();
-    this.dust?.dispose();
+    this.surface?.dispose();
     super.teardown();
   }
 

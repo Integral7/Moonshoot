@@ -8,6 +8,7 @@ import { LandingScreen } from './screens/LandingScreen';
 import { LaunchScreen } from './screens/LaunchScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 import { OrbitScreen } from './screens/OrbitScreen';
+import { ReturnScreen } from './screens/ReturnScreen';
 
 declare global {
   interface Window {
@@ -34,6 +35,7 @@ registerPhase('design', (m) => new DesignScreen(m));
 registerPhase('launch', (m) => new LaunchScreen(m));
 registerPhase('orbit', (m) => new OrbitScreen(m));
 registerPhase('landing', (m) => new LandingScreen(m));
+registerPhase('return', (m) => new ReturnScreen(m));
 registerPhase('cruise', (m) => new CruiseScreen(m));
 app.go('menu');
 app.start();

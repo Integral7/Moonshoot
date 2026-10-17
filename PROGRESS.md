@@ -43,9 +43,9 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 | 5 | Launch | ✅ done |
 | 6 | Earth orbit + TLI maneuver node | ✅ done |
 | 7 | Cruise (patched conic, MCC, warp) | ✅ done |
-| 8 | LOI + landing | ✅ done — **paused for user go-ahead** |
-| 9 | Return: ascent, TEI, reentry, splashdown | ☐ |
-| 10 | Scoring/failure analysis + replay w/ telemetry graphs | ☐ |
+| 8 | LOI + landing | ✅ done (user approved M9–M12) |
+| 9 | Return: ascent, TEI, reentry, splashdown | ✅ done |
+| 10 | Scoring/failure analysis + replay w/ telemetry graphs | ⏳ next |
 | 11 | Campaign polish, free-play states, perf | ☐ |
 | 12 | Docs + final headless pass | ☐ — **pause after this** |
 
@@ -158,8 +158,22 @@ Vite 8 + TypeScript 7 + Three.js 0.186. Vitest 5 for unit tests (`tests/`), Play
 - Known: planning happens at frame-dependent sim times, so e2e outcomes vary slightly run to run.
 - Campaign chain design→launch→orbit→cruise→landing uses carry everywhere but has no single e2e run yet (M11).
 
-## Next steps (M9, after user go-ahead)
-Return phase: lunar ascent from `surface` (vertical rise then pitch-over to LLO, or direct ascent), TEI planner
-(Earth-return targeting entry flight-path angle −6.5° at 122 km), return coast + correction, capsule separation,
-reentry with banked lift (L/D 0.3), Sutton-Graves heating vs heat-shield limits, g-load, drogue/main chutes,
-splashdown (ocean check), scoring. Then M10 replay/graphs, M11 campaign polish, M12 docs; PAUSE after M12.
+### M9 — Return (done)
+- `src/util/noise3.ts`: exact JS port of the GLSL 3D simplex (needs `Math.fround(0.142857142857)`: GLSL relies on
+  float32 rounding past 1/7). `src/sim/earthSurface.ts` `isLand` = same continent function as the GPU bake.
+- `src/sim/reentry.ts` `EntrySim`: capsule separation, banked lift, Sutton-Graves vs shield maxFlux/maxLoad, 12 g
+  limit, skip-out/miss detection, reefed drogue/main fill (3 s / 8 s) with q limits (10 / 4 kPa), splashdown
+  (speed, lat/lon, ocean). `entryAutopilot`: constant-drag tracking (lift-down capture, 4 g, hdot damping).
+- `DescentSim` `onSurface` start (grounded until thrust > weight; touchdown armed above 3 m), `lunarAscentAutopilot`.
+- `planTei` (entry-angle targeting via `perigeeForEntryAngle`, finite-burn refined), `planEarthCorrection`,
+  `earthApproach`, `entryAngleOf`. `returnPreset`.
+- Render: `SurfaceScene` (shared by landing and return), `entryFx.ts` (plasma glow, local ocean/land patch).
+- `ReturnScreen` modes surface → ascent → orbit (TEI/correction planners) → entry → done; scored debrief.
+- Fix: warp limits must be values on `WARP_LEVELS`; `setWarpLevel` now snaps down to the nearest level.
+- E2E: free-play return lifts off, TEI, coasts, enters at −6.50°, splashes down at 8.7 m/s in the ocean.
+
+## Next steps
+M10: telemetry graph component in the debrief (channels, marks), replay recording (vehicle ECI track + attitude +
+throttle + body) per phase, replay viewer screen (scrubber, synced graph cursor) + main-menu Replays list (localStorage,
+decimated). M11: campaign save/resume, mission summary after return, full-chain campaign e2e. M12: README
+"How this was built", final headless pass, PAUSE.
